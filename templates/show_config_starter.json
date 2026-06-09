@@ -1,0 +1,46 @@
+{
+  "schema_version": 2,
+  "preset": "pixera",
+  "show_name": "REPLACE_WITH_SHOW_NAME",
+  "show_date": "YYYY-MM-DD",
+  "operator": {
+    "name": "REPLACE_WITH_OPERATOR_NAME",
+    "email": "REPLACE_WITH_OPERATOR_EMAIL"
+  },
+  "expected_specs": {
+    "framerate": 30,
+    "color_space": "bt709",
+    "color_range": "tv",
+    "audio_sample_rate": 48000,
+    "audio_channels": 2
+  },
+  "expected_codecs": [
+    "prores_422_proxy",
+    "prores_422_lt",
+    "prores_422",
+    "prores_422_hq",
+    "prores_4444",
+    "prores_4444_xq",
+    "notchlc"
+  ],
+  "preferred_codecs": [
+    "prores_422_hq",
+    "prores_4444",
+    "notchlc"
+  ],
+  "screens": [
+    { "id": "SCR01", "name": "REPLACE_OR_LEAVE_BLANK", "resolution": "REPLACE_WITH_RESOLUTION" },
+    { "id": "SCR02", "name": "REPLACE_OR_LEAVE_BLANK", "resolution": "REPLACE_WITH_RESOLUTION" }
+  ],
+  "validation_strictness": {
+    "resolution": "strict",
+    "framerate": "strict",
+    "codec": "strict",
+    "codec_flavor": "warn",
+    "color_space": "warn",
+    "color_range": "warn",
+    "audio_sample_rate": "info",
+    "audio_channels": "info",
+    "screen_id": "strict"
+  }
+}

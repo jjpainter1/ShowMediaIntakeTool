@@ -1,0 +1,36 @@
+{
+  "preset_name": "PlayBack Pro",
+  "preset_description": "For PlayBack Pro / PlayBack Pro Plus X (placeholder — identical to Pixera at v2.0; verified codec list deferred to v2.1)",
+  "expected_specs": {
+    "framerate": 30,
+    "color_space": "bt709",
+    "color_range": "tv",
+    "audio_sample_rate": 48000,
+    "audio_channels": 2
+  },
+  "expected_codecs": [
+    "notchlc",
+    "prores_422_proxy",
+    "prores_422_lt",
+    "prores_422",
+    "prores_422_hq",
+    "prores_4444",
+    "prores_4444_xq"
+  ],
+  "preferred_codecs": [
+    "notchlc",
+    "prores_422_hq",
+    "prores_4444"
+  ],
+  "validation_strictness": {
+    "resolution": "strict",
+    "framerate": "strict",
+    "codec": "strict",
+    "codec_flavor": "warn",
+    "color_space": "warn",
+    "color_range": "warn",
+    "audio_sample_rate": "info",
+    "audio_channels": "info",
+    "screen_id": "strict"
+  }
+}

@@ -1,179 +1,161 @@
 ﻿# Show Media Intake Tool v2
 
-GUI desktop app for accepting media files at live events. v2 uses **Tauri + React** for the shell and **FastAPI + Python `modules/`** for business logic.
+A Windows desktop app for **validating, organizing, and delivering** media files for live events. It checks filenames and technical specs (codec, resolution, framerate, color, audio) against your show requirements, then copies approved files into the right folders—without deleting or moving content already on screens.
 
-Current implementation status is tracked in `PROGRESS.md`.
+Built for operators and producers working with **Pixera**, **PlayBack Pro**, **Mitti**, and similar playback systems.
 
-## Prerequisites
+**Latest release:** [Download v2.1.1](https://github.com/jjpainter1/ShowMediaIntakeTool/releases/latest) (Windows 64-bit zip)
 
-- Python 3.10+
-- Node.js 20+
-- [Rust](https://rustup.rs/) (for Tauri desktop builds)
-- ffprobe on PATH (ffmpeg)
+![Dashboard with screen cards, per-file validation, review queue, and delivery stats](docs/images/README-dashboard.png)
 
-## Development setup
+---
 
-### 1. Python backend
+## What it does
 
-**First time only:**
+When content arrives from editors or vendors, the tool acts as an **intake gate**:
 
-```powershell
-cd path\to\ShowMediaIntakeTool_v2
-scripts\setup-dev.cmd
-```
+1. **Scans** a delivery folder (filenames + ffprobe technical specs).
+2. **Compares** each file against the show’s configured requirements.
+3. **Reports** what will copy, what has warnings, and what must go to review.
+4. **Copies** only after you confirm—using safe temp-then-rename writes.
 
-**Each dev session:**
+The tool **never deletes** media and **never moves files already in active screen folders**. Old and new versions can coexist; you handle swaps inside your playback software.
 
-```powershell
-scripts\start-backend.ps1
-```
+---
 
-`start-backend.ps1` uses `.venv` when developing from source. Packaged installs (extracted zip) use `scripts\setup.cmd` instead, which creates `python-packages\`.
+## Install (operators)
 
-Manual equivalent:
+**Requirements:** Windows 10/11 (64-bit), ~500 MB disk space, internet on first setup (Python install).
 
-```powershell
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-pip install -r requirements.txt
-python -m uvicorn backend.main:app --reload --host 127.0.0.1 --port 8000
-```
+1. Download **`ShowMediaIntakeTool-v2.1.1-win64.zip`** from [Releases](https://github.com/jjpainter1/ShowMediaIntakeTool/releases).
+2. Extract to a permanent folder (e.g. `C:\Tools\ShowMediaIntakeTool\`).
+3. Run **`scripts\setup.cmd`** (first time only).
+4. Launch via the **desktop shortcut** — do not double-click the `.exe` alone.
 
-### 2. React frontend (browser dev)
+![Setup complete — desktop shortcuts for the GUI and CLI launchers](docs/images/README-setup.jpg)
 
-The Node project is in **`frontend/`** — `npm` commands must run there (or use the helpers below).
+Full install notes, troubleshooting, and uninstall steps: **[README-INSTALL.txt](README-INSTALL.txt)** (included in the release zip).
 
-```powershell
-cd frontend
-npm install
-npm run dev
-```
+---
 
-From the **repo root** you can also run:
+## Features
 
-```powershell
-npm run install:frontend   # first time only
-npm run dev                # delegates to frontend/
-```
+### Show dashboard
 
-Or without changing directory:
+Open a show folder and see at a glance:
 
-```powershell
-scripts\npm-dev.cmd
-```
+- Files per screen, version conflicts, and stale folders
+- Days until show date
+- Per-file validation status for content already on disk
 
-Open http://localhost:1420 — Vite proxies `/api` (including WebSockets) to http://127.0.0.1:8000.
+### Media intake (two-phase)
 
-**One command (backend + frontend):**
+**Plan → confirm → copy.** You always see a full report before anything is written.
 
-```powershell
-scripts\dev.cmd
-```
+| Mode | When to use | Where files go |
+|------|-------------|----------------|
+| **Routed** | Filenames include a screen ID (`SCR01`, `SCRwide`, etc.) | `Media/SCR##/` matching the filename |
+| **Flat** | Batch delivery without per-file screen tokens | `Media/_INCOMING/` (original filenames kept) |
 
-Starts the backend (new window), waits until it is healthy, runs the frontend in this terminal, and opens your browser. Press **Ctrl+C** here to stop both. Stale processes on ports **8000** and **1420** are cleared automatically (e.g. a previous `npm run dev` left running).
+Strict validation failures route to **`Media/_REVIEW/`**. Warnings copy but are flagged in the report.
 
-> **Note:** `npm run dev` at the project root (without `package.json` helpers) will fail — there is no root Vite app, only `frontend\`.
+![Intake plan — review COPY, WARN, and REVIEW actions before confirming](docs/images/README-intake-plan.png)
 
-**Run dev tests:**
+![Intake complete — copied files, warnings, failures routed to _REVIEW, and session log](docs/images/README-intake-results.png)
 
-```powershell
-.\scripts\run-tests.ps1
-```
+### Config editor
 
-**Manual (two terminals):**
+Per-show settings in `show_config.json` (editable in the app):
 
-```powershell
-# Terminal 1 — backend
-.\scripts\start-backend.ps1
+- Screens, resolutions, and output specs (uniform or **per-screen** for mixed LED/projector rigs)
+- Expected codecs (ProRes, NotchLC, H.264, DNxHD, …) and preferred flavors
+- **Validation strictness** per field (`strict` / `warn` / `info` / `ignore`)
+- **Filename convention** — default pattern or custom token order (show token, screen, content, version, date, …)
+- **Presets** for Pixera, PlayBack Pro, Mitti (starting points you can customize)
 
-# Terminal 2 — frontend (pick one)
-cd frontend
-npm run dev
+![Show Info — operator details, routed vs flat intake mode, delivery settings](docs/images/README-config-showinfo.png)
 
-# or from repo root:
-npm run dev
+![Screens tab — screen IDs, display names, and per-screen resolutions](docs/images/README-config-screens.png)
 
-# or:
-scripts\npm-dev.cmd
-```
+![Expected Specs — presets, output specs, default filename pattern, and codecs](docs/images/README-config-expectedspecs.png)
 
-**Browse folders in browser dev:** the **Browse** button calls `GET /api/system/pick-folder`, which opens the standard Windows folder dialog via the Python backend (same machine). Use `npm run tauri:dev` for the Tauri-native dialog in the desktop shell.
+![Validation tab — strict, warn, info, and ignore per filename and media field](docs/images/README-config-validation.png)
 
-**Future (v2.1):** Revisit an intake folder browser that previews media files inside the folder (would need drive switching); standard folder pick is used for now.
+### Delivery spec document
 
-## API endpoints (Phase 1–2)
+Generate a **Word (.docx)** delivery specification from the show config—ready to send to editors and vendors.
 
-| Method | Path | Description |
-|--------|------|-------------|
-| GET | `/api/health` | ffprobe + user data readiness |
-| GET | `/api/recent-shows` | Recent shows list (max 5) |
-| GET | `/api/shows/load?path=` | Load show; 409 if v1 config needs migration |
-| GET | `/api/shows/dashboard?path=` | Dashboard snapshot via `gather_snapshot()` |
-| GET | `/api/shows/config?path=` | Raw `show_config.json` |
-| PUT | `/api/shows/config` | Save config (`{ path, config }`) |
-| POST | `/api/shows/migrate?path=` | v1 → v2 migration with backup |
-| POST | `/api/shows/create` | Create folder + starter config (`{ parent_path, folder_name }`) |
-| POST | `/api/intake/scan` | Build intake plan (sync fallback) |
-| POST | `/api/intake/execute` | Execute intake plan (sync fallback) |
-| WS | `/api/intake/scan/ws` | Scan with live progress |
-| WS | `/api/intake/execute/ws` | Execute with live progress |
-| GET | `/api/system/pick-folder?title=` | Native folder picker (local backend) |
+![Generated delivery spec document sent to content creators](docs/images/README-docx.png)
 
-CORS allows `http://localhost:1420` and Tauri origins.
+### CLI fallback
 
-### 3. Tauri desktop (optional)
+Power users can run **`cli_intake.py`** from a terminal or the optional CLI desktop shortcut after setup.
 
-Requires Rust toolchain:
+---
 
-```powershell
-cd frontend
-npm run tauri:dev
-```
-
-## Project layout
+## Typical workflow
 
 ```
-ShowMediaIntakeTool_v2/
-├── backend/           # FastAPI routes → modules/
-├── modules/           # Business logic (intake, config, presets, …)
-├── templates/         # Starter config, presets, spec template
-├── frontend/          # React + Tauri shell
-├── scripts/           # Dev, packaging, and test utilities
-├── assets/branding/   # Source app icon (icon_1024.png, AppIcon.ico)
-├── cli_intake.py      # Power-user CLI fallback
-└── DESIGN-V2.md       # Full UI/workflow specification
+Launch app → Open or create show → Edit Config (screens, specs, validation)
+    → Dashboard (check show health)
+    → Intake Delivery (pick source folder → review plan → confirm copy)
+    → Generate Spec Doc (when sending requirements to vendors)
 ```
 
-## CLI fallback
+![Launch screen — recent shows, browse for folder, or create a new show](docs/images/README-launch.png)
 
-```powershell
-python cli_intake.py
+### Show folder layout
+
+Each event is a folder you create (e.g. `D:\Shows\MyShow_20260425\`):
+
+```
+MyShow_20260425/
+├── show_config.json          # Tool manages; edit in app or Notepad++
+├── MyShow.avp                # Your playback project (tool does not touch)
+└── Media/
+    ├── _LOGS/                # Delivery logs and intake transcripts
+    ├── _REVIEW/              # Files that failed strict validation
+    ├── _REFERENCE/           # Operator reference materials
+    ├── _INCOMING/            # Flat-intake destination
+    ├── SCR01/  SCR02/  …     # Per-screen folders (routed intake)
 ```
 
-## Install target (production)
+---
 
-Recommended path: `C:\Tools\ShowMediaIntakeTool\`
+## Filename convention (routed intake)
 
-**Operators:** see [`README-INSTALL.txt`](README-INSTALL.txt) — extract zip → run `scripts\setup.cmd` → use desktop shortcut.
+Default pattern:
 
-**Developers building a release:**
-
-```powershell
-# Requires Rust + Node (see Prerequisites). Builds Tauri exe, bundles FFmpeg, creates dist\ zip.
-.\scripts\build-release.ps1
+```
+SCR##_content_v##_YYYYMMDD.ext
 ```
 
-See [`PACKAGING.md`](PACKAGING.md) for the full distribution spec.
+Examples: `SCR01_OpeningVideo_v01_20260428.mov`, `SCRwide-01-02-03_Banner_v02_20260428.mov`
 
+With a **custom convention** enabled, you define token order in Config. The parser finds tokens in **any order** in the filename. Original filenames are **never renamed** on copy.
 
-## Troubleshooting
+![Custom filename pattern — drag tokens to reorder; live example updates below](docs/images/README-config-expectedspecs-filename.png)
 
-### Vite `EBUSY` when the repo is in Dropbox
+---
 
-Dropbox can lock files under `node_modules` while syncing. Vite pre-bundles dependencies by renaming folders under `.vite`, which fails with `EBUSY: resource busy or locked`.
+## Documentation
 
-This project sets Vite `cacheDir` to `%LOCALAPPDATA%\ShowMediaIntakeTool\vite-cache` (outside Dropbox). If you still see errors:
+| Document | Audience | Contents |
+|----------|----------|----------|
+| [README-INSTALL.txt](README-INSTALL.txt) | Operators | Install, update, troubleshoot |
+| [DEVELOPMENT.md](DEVELOPMENT.md) | Developers | Dev setup, tests, API, building releases |
+| [PACKAGING.md](PACKAGING.md) | Developers | Distribution zip layout and scripts |
+| [DESIGN-V2.md](DESIGN-V2.md) | Developers | Full UI and workflow specification |
+| [CHANGELOG.md](CHANGELOG.md) | Everyone | Release history |
+| [AGENT-INTEGRATION.md](AGENT-INTEGRATION.md) | Future | Headless / AI agent integration goals |
+| [PROGRESS.md](PROGRESS.md) | Developers | Implementation status |
 
-1. Stop dev servers (Ctrl+C) and close anything using `frontend/node_modules/.vite`.
-2. Pause Dropbox sync briefly, then delete `frontend/node_modules/.vite` if it remains.
-3. Retry `npm run dev` from `frontend`.
+---
+
+## License
+
+See [LICENSE](LICENSE). Third-party notices: [THIRD-PARTY-NOTICES.txt](THIRD-PARTY-NOTICES.txt).
+
+## Support
+
+Issues and releases: [github.com/jjpainter1/ShowMediaIntakeTool](https://github.com/jjpainter1/ShowMediaIntakeTool)

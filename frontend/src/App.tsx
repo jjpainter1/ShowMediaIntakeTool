@@ -20,6 +20,7 @@ import { LaunchScreen } from './screens/LaunchScreen'
 import { DashboardView } from './screens/DashboardView'
 import { ConfigView } from './screens/ConfigView'
 import { IntakeView } from './screens/IntakeView'
+import { SpecView } from './screens/SpecView'
 import { ShowLayout, type ShowView } from './screens/ShowLayout'
 import './App.css'
 
@@ -230,11 +231,7 @@ function App() {
               onComplete={() => void refreshDashboard(loadedShow.path)}
             />
           )}
-          {activeView === 'spec' && (
-            <div className="dashboard-placeholder">
-              <p>Generate Spec Doc ships in a later phase.</p>
-            </div>
-          )}
+          {activeView === 'spec' && <SpecView show={loadedShow} />}
           {activeView === 'config' && (
             <ConfigView
               show={loadedShow}

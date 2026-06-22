@@ -29,7 +29,7 @@ from modules.console_ui import (
 )
 
 # Folders inside Media/ that are always valid and never stale
-_MANAGED_FOLDERS  = {"_LOGS", "_REVIEW", "_REFERENCE"}
+_MANAGED_FOLDERS  = {"_LOGS", "_REVIEW", "_REFERENCE", "_INCOMING"}
 # Special on-demand content folders that are valid even if not in config
 _SPECIAL_PREFIXES = ("SCRwide", "SCRall", "AUD")
 
@@ -59,6 +59,17 @@ def open_in_explorer(path: Path) -> bool:
             os.startfile(str(resolved))
             return True
         subprocess.Popen(["explorer", "/select,", str(resolved)])
+        return True
+    except OSError:
+        return False
+
+
+def open_with_default_app(file_path: Path) -> bool:
+    """Open a file with the OS-registered default application (e.g. Word for .docx)."""
+    if not file_path.is_file():
+        return False
+    try:
+        os.startfile(str(file_path.resolve()))
         return True
     except OSError:
         return False
@@ -147,7 +158,7 @@ def create_new_show(parent_path: Path, show_name: str, show_date: str) -> Path:
             f"A show folder with this name already exists at: {show_root}"
         )
 
-    for subdir in ("Media", "Media/_LOGS", "Media/_REVIEW", "Media/_REFERENCE"):
+    for subdir in ("Media", "Media/_LOGS", "Media/_REVIEW", "Media/_REFERENCE", "Media/_INCOMING"):
         (show_root / subdir).mkdir(parents=True)
 
     config_path = create_starter_config(show_root)
@@ -178,7 +189,7 @@ def setup_new_show(show_root: Path) -> bool:
         return False
 
     # Create base Media structure (no screen folders yet — those come from config)
-    for subdir in ("Media", "Media/_LOGS", "Media/_REVIEW", "Media/_REFERENCE"):
+    for subdir in ("Media", "Media/_LOGS", "Media/_REVIEW", "Media/_REFERENCE", "Media/_INCOMING"):
         (show_root / subdir).mkdir(parents=True, exist_ok=True)
 
     config_path = create_starter_config(show_root)
@@ -203,6 +214,7 @@ def ensure_media_structure(show_root: Path, config: ShowConfig) -> list[str]:
         show_root / "Media",
         show_root / "Media" / "_LOGS",
         show_root / "Media" / "_REVIEW",
+        show_root / "Media" / "_INCOMING",
         show_root / "Media" / "_REFERENCE",
     ]
     for d in base_dirs:

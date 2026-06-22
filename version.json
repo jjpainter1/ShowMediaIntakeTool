@@ -1,0 +1,10 @@
+{
+  "app_version": "2.1.1",
+  "python_min": "3.10",
+  "python_recommended": "3.12.8",
+  "python_installer_url": "https://www.python.org/ftp/python/3.12.8/python-3.12.8-amd64.exe",
+  "ffmpeg_version": "8.1.1-essentials",
+  "ffmpeg_download_url": "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip",
+  "ffmpeg_source": "https://www.gyan.dev/ffmpeg/builds/",
+  "project_url": "https://github.com/prestigeav/ShowMediaIntakeTool"
+}

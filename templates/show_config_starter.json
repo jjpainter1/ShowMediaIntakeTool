@@ -4,6 +4,7 @@
   "show_name": "REPLACE_WITH_SHOW_NAME",
   "show_date": "YYYY-MM-DD",
   "operator": {
+    "company_name": "REPLACE_WITH_COMPANY_NAME",
     "name": "REPLACE_WITH_OPERATOR_NAME",
     "email": "REPLACE_WITH_OPERATOR_EMAIL"
   },
@@ -41,6 +42,19 @@
     "color_range": "warn",
     "audio_sample_rate": "info",
     "audio_channels": "info",
-    "screen_id": "strict"
+    "screen_id": "strict",
+    "filename_convention": "strict",
+    "filename_format": "warn",
+    "show_token": "strict"
+  },
+  "intake": {
+    "mode": "routed"
+  },
+  "output_specs": {
+    "mode": "uniform"
+  },
+  "delivery": {},
+  "filename_convention": {
+    "enabled": false
   }
 }

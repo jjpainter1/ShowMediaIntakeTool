@@ -15,7 +15,7 @@ type ShowLayoutProps = {
 const NAV_ITEMS: { id: ShowView; label: string; disabled?: boolean }[] = [
   { id: 'dashboard', label: 'Dashboard' },
   { id: 'intake', label: 'Intake' },
-  { id: 'spec', label: 'Spec Doc', disabled: true },
+  { id: 'spec', label: 'Spec Doc' },
   { id: 'config', label: 'Config' },
 ]
 

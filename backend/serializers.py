@@ -21,6 +21,8 @@ def _parsed_filename_dict(parsed: ParsedFilename) -> dict:
         "extension": parsed.extension,
         "is_loop": parsed.is_loop,
         "original_name": parsed.original_name,
+        "show_token": parsed.show_token,
+        "artist_initials": parsed.artist_initials,
     }
 
 
@@ -33,6 +35,8 @@ def _parsed_filename_from_dict(data: dict) -> ParsedFilename:
         extension=data["extension"],
         is_loop=bool(data["is_loop"]),
         original_name=data["original_name"],
+        show_token=data.get("show_token"),
+        artist_initials=data.get("artist_initials"),
     )
 
 
@@ -257,10 +261,13 @@ def intake_scan_result_to_dict(
     stale_folders: list[StaleFolder],
     show_root: Path,
     source_path: Path,
+    *,
+    intake_mode: str = "routed",
 ) -> dict:
     return {
         "show_path": str(show_root),
         "source_path": str(source_path),
+        "intake_mode": intake_mode,
         "plans": [file_plan_to_dict(p, show_root) for p in plans],
         "stale_folders": [stale_folder_to_dict(sf) for sf in stale_folders],
     }

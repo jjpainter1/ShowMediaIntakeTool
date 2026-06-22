@@ -33,6 +33,8 @@ export type ParsedFile = {
   extension: string
   is_loop: boolean
   original_name: string
+  show_token?: string | null
+  artist_initials?: string | null
 }
 
 export type MediaFile = {
@@ -285,6 +287,7 @@ export type IntakeStaleFolder = {
 export type IntakeScanResult = {
   show_path: string
   source_path: string
+  intake_mode?: 'routed' | 'flat'
   plans: IntakeFilePlan[]
   stale_folders: IntakeStaleFolder[]
 }
@@ -414,10 +417,14 @@ export async function scanIntake(
   sourcePath: string,
   onProgress?: (progress: IntakeScanProgress) => void,
 ): Promise<IntakeScanResult> {
+  const payload: Record<string, string> = {
+    show_path: showPath,
+    source_path: sourcePath,
+  }
   try {
     return await intakeWebSocket<IntakeScanResult>(
       '/api/intake/scan/ws',
-      { show_path: showPath, source_path: sourcePath },
+      payload,
       (data) => {
         if (data.type === 'progress') {
           onProgress?.({
@@ -434,7 +441,10 @@ export async function scanIntake(
     }
     const result = await apiRequest<IntakeScanResult>('/api/intake/scan', {
       method: 'POST',
-      body: JSON.stringify({ show_path: showPath, source_path: sourcePath }),
+      body: JSON.stringify({
+        show_path: showPath,
+        source_path: sourcePath,
+      }),
     })
     onProgress?.({
       current: result.plans.length,
@@ -512,12 +522,20 @@ export function openIntakeLog(logPath: string): Promise<{ opened: boolean; log_p
 
 // --- Config Editor ---
 
+export type ScreenExpectedSpecs = {
+  framerate: number | null
+  color_space: string | null
+  color_range: string | null
+  audio_sample_rate: number | null
+  audio_channels: number | null
+}
+
 export type ShowConfigData = {
   schema_version: number
   preset: string
   show_name: string
   show_date: string
-  operator: { name: string; email: string }
+  operator: { name: string; email: string; company_name?: string }
   expected_specs: {
     framerate: number | null
     color_space: string | null
@@ -527,8 +545,33 @@ export type ShowConfigData = {
   }
   expected_codecs: string[]
   preferred_codecs: string[]
-  screens: { id: string; name?: string; resolution?: string }[]
+  screens: {
+    id: string
+    name?: string
+    resolution?: string
+    expected_specs?: ScreenExpectedSpecs
+  }[]
   validation_strictness: Record<string, string>
+  intake?: {
+    mode: 'routed' | 'flat'
+  }
+  output_specs?: {
+    mode: 'uniform' | 'per_screen'
+  }
+  delivery?: {
+    show_token?: string | null
+    optional_screen_notes?: string | null
+    vendor_notes?: string | null
+  }
+  filename_convention?: {
+    enabled: boolean
+    tokens?: string[]
+    formats?: {
+      version?: { prefix?: string }
+      date?: string
+      content?: { allow_loop_suffix?: boolean }
+    }
+  }
 }
 
 export type PresetData = {
@@ -602,6 +645,43 @@ export function openPathInExplorer(path: string): Promise<{ opened: boolean; pat
     method: 'POST',
     body: JSON.stringify({ path }),
   })
+}
+
+export type SpecGenerateResult = {
+  path: string
+  output_path: string
+  show_name: string
+}
+
+export function generateSpec(showPath: string): Promise<SpecGenerateResult> {
+  return apiRequest('/api/spec/generate', {
+    method: 'POST',
+    body: JSON.stringify({ path: showPath }),
+  })
+}
+
+export function openSpecFile(outputPath: string): Promise<{ opened: boolean; path: string }> {
+  return apiRequest('/api/spec/open', {
+    method: 'POST',
+    body: JSON.stringify({ path: outputPath }),
+  })
+}
+
+const STALE_SPEC_MESSAGE =
+  'Spec API unavailable. Restart the backend: .\\scripts\\start-backend.ps1 ' +
+  '(an older process may still be on port 8000 without Phase 6 routes).'
+
+export function formatSpecError(err: unknown): string {
+  if (err instanceof ApiError) {
+    if (err.status === 404) {
+      return STALE_SPEC_MESSAGE
+    }
+    return err.message
+  }
+  if (err instanceof Error) {
+    return err.message
+  }
+  return 'Spec generation failed'
 }
 
 export function pickFileFromServer(

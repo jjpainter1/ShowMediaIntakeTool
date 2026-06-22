@@ -11,12 +11,24 @@ import {
   saveCustomPreset,
   saveShowConfig,
   type PresetData,
+  type ScreenExpectedSpecs,
   type ShowConfigData,
   type ShowSummary,
 } from '../lib/api'
 import {
+  ALL_FILENAME_TOKENS,
   buildConfigPayload,
+  buildExampleFilename,
+  conventionEnabled,
+  conventionUsesShowToken,
+  DEFAULT_SCREEN_NOTES,
+  FILENAME_TOKEN_META,
+  DEFAULT_FILENAME_TOKENS,
+  type FilenameTokenId,
+  isPerScreenOutput,
   isSpecNa,
+  outputSpecsMode,
+  screenSpecsFromShow,
   validateAll,
   type ConfigTab,
   type FieldErrors,
@@ -60,7 +72,35 @@ const VALIDATION_FIELDS: {
   { key: 'color_range', label: 'Color Range', autoIgnoreSpec: 'color_range' },
   { key: 'audio_sample_rate', label: 'Audio Sample Rate', autoIgnoreSpec: 'audio_sample_rate' },
   { key: 'audio_channels', label: 'Audio Channels', autoIgnoreSpec: 'audio_channels' },
-  { key: 'screen_id', label: 'Screen ID' },
+]
+
+const FILENAME_VALIDATION_FIELDS: {
+  key: keyof ShowConfigData['validation_strictness']
+  label: string
+  hint: string
+  visible?: (config: ShowConfigData) => boolean
+}[] = [
+  {
+    key: 'filename_convention',
+    label: 'Convention match',
+    hint: 'Filename does not match the delivery pattern at all',
+  },
+  {
+    key: 'filename_format',
+    label: 'Field format',
+    hint: 'Recognisable pattern but malformed version, date, content, etc.',
+  },
+  {
+    key: 'show_token',
+    label: 'Show token match',
+    hint: 'Show token in filename does not match Delivery show token',
+    visible: conventionUsesShowToken,
+  },
+  {
+    key: 'screen_id',
+    label: 'Screen ID (in filename)',
+    hint: 'Screen token is missing, unknown, or not in config',
+  },
 ]
 
 function cloneConfig(config: ShowConfigData): ShowConfigData {
@@ -82,13 +122,14 @@ function selectToSpecString(value: string): string | null {
 }
 
 type SpecSelectProps = {
-  label: string
+  label?: string
   value: number | string | null
   options: string[]
   numeric?: boolean
   onChange: (value: number | string | null) => void
   disabled?: boolean
   hint?: string
+  compact?: boolean
 }
 
 function SpecSelect({
@@ -99,6 +140,7 @@ function SpecSelect({
   onChange,
   disabled,
   hint,
+  compact = false,
 }: SpecSelectProps) {
   const customInputRef = useRef<HTMLInputElement>(null)
   const [pendingCustom, setPendingCustom] = useState(false)
@@ -129,8 +171,8 @@ function SpecSelect({
   }
 
   return (
-    <label className="field config-spec-field">
-      <span>{label}</span>
+    <label className={`field config-spec-field${compact ? ' config-spec-field-compact' : ''}`}>
+      {label ? <span>{label}</span> : null}
       <select
         value={selectValue}
         onChange={(event) => {
@@ -152,6 +194,7 @@ function SpecSelect({
         <option value="__na__">N/A</option>
         <option value="__custom__">Custom…</option>
       </select>
+      {(showCustomInput || (!compact && isNa) || hint) && (
       <div className="config-spec-slot">
         {showCustomInput ? (
           <input
@@ -166,12 +209,13 @@ function SpecSelect({
             }}
             disabled={disabled}
           />
-        ) : isNa ? (
+        ) : !compact && isNa ? (
           <span className="field-hint config-spec-slot-hint">Validation ignored for this field</span>
         ) : hint ? (
           <span className="field-hint config-spec-slot-hint">{hint}</span>
         ) : null}
       </div>
+      )}
     </label>
   )
 }
@@ -302,6 +346,201 @@ function CodecTags({
   )
 }
 
+type FilenameTokenBuilderProps = {
+  tokens: string[]
+  onChange: (tokens: string[]) => void
+  example: string
+  error?: string
+}
+
+function FilenameTokenBuilder({ tokens, onChange, example, error }: FilenameTokenBuilderProps) {
+  const [dragFromIndex, setDragFromIndex] = useState<number | null>(null)
+  const [overIndex, setOverIndex] = useState<number | null>(null)
+  const tokensRef = useRef(tokens)
+  const onChangeRef = useRef(onChange)
+  const dragFromRef = useRef<number | null>(null)
+  const overRef = useRef<number | null>(null)
+
+  tokensRef.current = tokens
+  onChangeRef.current = onChange
+
+  const unused = ALL_FILENAME_TOKENS.filter((token) => !tokens.includes(token))
+
+  function reorderTokens(fromIndex: number, toIndex: number) {
+    if (fromIndex === toIndex || fromIndex < 0 || toIndex < 0) {
+      return
+    }
+    const reordered = [...tokensRef.current]
+    const [item] = reordered.splice(fromIndex, 1)
+    reordered.splice(toIndex, 0, item)
+    onChangeRef.current(reordered)
+  }
+
+  function removeToken(index: number) {
+    onChange(tokens.filter((_, itemIndex) => itemIndex !== index))
+  }
+
+  function addToken(token: FilenameTokenId) {
+    if (tokens.includes(token)) {
+      return
+    }
+    onChange([...tokens, token])
+  }
+
+  function resolveTokenIndex(clientX: number, clientY: number): number | null {
+    const el = document.elementFromPoint(clientX, clientY)
+    const tokenEl = el?.closest('[data-token-index]') as HTMLElement | null
+    if (!tokenEl) {
+      return null
+    }
+    const index = Number(tokenEl.dataset.tokenIndex)
+    return Number.isNaN(index) ? null : index
+  }
+
+  function beginPointerDrag(index: number, event: React.PointerEvent<HTMLSpanElement>) {
+    if (event.button !== 0) {
+      return
+    }
+    event.preventDefault()
+    dragFromRef.current = index
+    overRef.current = index
+    setDragFromIndex(index)
+    setOverIndex(index)
+    event.currentTarget.setPointerCapture(event.pointerId)
+  }
+
+  useEffect(() => {
+    if (dragFromIndex === null) {
+      return
+    }
+
+    function finishPointerDrag() {
+      const from = dragFromRef.current
+      const to = overRef.current
+      if (from !== null && to !== null) {
+        reorderTokens(from, to)
+      }
+      dragFromRef.current = null
+      overRef.current = null
+      setDragFromIndex(null)
+      setOverIndex(null)
+    }
+
+    function handlePointerMove(event: PointerEvent) {
+      const index = resolveTokenIndex(event.clientX, event.clientY)
+      if (index === null || dragFromRef.current === null) {
+        return
+      }
+      overRef.current = index
+      setOverIndex(index)
+    }
+
+    window.addEventListener('pointermove', handlePointerMove)
+    window.addEventListener('pointerup', finishPointerDrag)
+    window.addEventListener('pointercancel', finishPointerDrag)
+    return () => {
+      window.removeEventListener('pointermove', handlePointerMove)
+      window.removeEventListener('pointerup', finishPointerDrag)
+      window.removeEventListener('pointercancel', finishPointerDrag)
+    }
+  }, [dragFromIndex])
+
+  return (
+    <div className="config-filename-section">
+      <div className="config-section-heading">
+        <strong>Filename pattern</strong>
+        <span className="field-hint">Drag tokens to reorder · Click ✕ to move back to available</span>
+      </div>
+
+      {tokens.length === 0 ? (
+        <p className="config-screens-lead">Click tokens below to build the pattern.</p>
+      ) : (
+        <div className="config-filename-pattern" role="list" aria-label="Filename token order">
+          {tokens.map((token, index) => {
+            const meta = FILENAME_TOKEN_META[token as FilenameTokenId]
+            if (!meta) {
+              return null
+            }
+            const isDragging = dragFromIndex === index
+            const isDropTarget = overIndex === index && dragFromIndex !== null && dragFromIndex !== index
+            return (
+              <div key={token} className="config-filename-pattern-item" role="listitem">
+                {index > 0 && <span className="config-filename-separator" aria-hidden="true">→</span>}
+                <span
+                  className={[
+                    'config-filename-token',
+                    'config-filename-token-active',
+                    isDragging ? 'config-filename-token-dragging' : '',
+                    isDropTarget ? 'config-filename-token-drop-target' : '',
+                  ]
+                    .filter(Boolean)
+                    .join(' ')}
+                  title={meta.hint}
+                  data-token-index={index}
+                  onPointerDown={(event) => {
+                    if ((event.target as HTMLElement).closest('button')) {
+                      return
+                    }
+                    beginPointerDrag(index, event)
+                  }}
+                >
+                  <span className="config-filename-drag-handle" aria-hidden="true">
+                    ⠿
+                  </span>
+                  <span className="config-filename-token-pos">{index + 1}</span>
+                  <span className="config-filename-token-text">
+                    <code>{token}</code>
+                    <span className="config-filename-token-label">{meta.label}</span>
+                  </span>
+                  <button
+                    type="button"
+                    className="config-codec-remove"
+                    onClick={() => removeToken(index)}
+                    aria-label={`Remove ${meta.label} from pattern`}
+                  >
+                    ✕
+                  </button>
+                </span>
+              </div>
+            )
+          })}
+        </div>
+      )}
+
+      <div className="config-section-heading">
+        <strong>Available tokens</strong>
+        <span className="field-hint">Click to append to the pattern</span>
+      </div>
+      <div className="config-filename-available">
+        {unused.length === 0 ? (
+          <span className="config-screens-lead">All tokens are in the pattern.</span>
+        ) : (
+          unused.map((token) => {
+            const meta = FILENAME_TOKEN_META[token]
+            return (
+              <button
+                key={token}
+                type="button"
+                className="config-filename-available-token"
+                title={meta.hint}
+                onClick={() => addToken(token)}
+              >
+                <code>{token}</code>
+                <span>{meta.label}</span>
+              </button>
+            )
+          })
+        )}
+      </div>
+
+      <p className="config-screens-lead">
+        Example: <code>{example}</code>
+      </p>
+      {error && <span className="config-field-error">{error}</span>}
+    </div>
+  )
+}
+
 export function ConfigView({ show, onSaved, onDirtyChange }: ConfigViewProps) {
   const [activeTab, setActiveTab] = useState<ConfigTab>('info')
   const [config, setConfig] = useState<ShowConfigData | null>(null)
@@ -327,6 +566,11 @@ export function ConfigView({ show, onSaved, onDirtyChange }: ConfigViewProps) {
     return JSON.stringify(config) !== baseline
   }, [config, baseline])
 
+  const exampleFilename = useMemo(
+    () => (config ? buildExampleFilename(config) : ''),
+    [config],
+  )
+
   useEffect(() => {
     onDirtyChange?.(dirty)
   }, [dirty, onDirtyChange])
@@ -340,7 +584,27 @@ export function ConfigView({ show, onSaved, onDirtyChange }: ConfigViewProps) {
         fetchPresets(),
         fetchCodecIdentifiers(),
       ])
-      const cloned = cloneConfig(configData)
+      const cloned = cloneConfig({
+        ...configData,
+        intake: configData.intake ?? { mode: 'routed' },
+        output_specs: configData.output_specs ?? { mode: 'uniform' },
+        delivery: configData.delivery ?? { show_token: '' },
+        filename_convention: configData.filename_convention ?? { enabled: false },
+        validation_strictness: {
+          filename_convention: 'strict',
+          filename_format: 'warn',
+          show_token: 'strict',
+          screen_id: 'strict',
+          ...configData.validation_strictness,
+        },
+      })
+      if (isPerScreenOutput(cloned)) {
+        const template = screenSpecsFromShow(cloned)
+        cloned.screens = cloned.screens.map((screen) => ({
+          ...screen,
+          expected_specs: screen.expected_specs ?? { ...template },
+        }))
+      }
       setConfig(cloned)
       setBaseline(JSON.stringify(cloned))
       setPresets(presetData)
@@ -381,6 +645,99 @@ export function ConfigView({ show, onSaved, onDirtyChange }: ConfigViewProps) {
       }
     }
     return { ...next, validation_strictness: strictness }
+  }
+
+  function handleOutputModeChange(nextMode: 'uniform' | 'per_screen') {
+    updateConfig((current) => {
+      const prevMode = outputSpecsMode(current)
+      if (nextMode === prevMode) {
+        return current
+      }
+      if (nextMode === 'per_screen') {
+        const template = screenSpecsFromShow(current)
+        return syncAutoIgnore({
+          ...current,
+          output_specs: { mode: nextMode },
+          screens: current.screens.map((screen) => ({
+            ...screen,
+            expected_specs: screen.expected_specs ?? { ...template },
+          })),
+        })
+      }
+      return syncAutoIgnore({
+        ...current,
+        output_specs: { mode: nextMode },
+        screens: current.screens.map(({ expected_specs: _removed, ...screen }) => screen),
+      })
+    })
+  }
+
+  function handleConventionMode(mode: 'default' | 'custom') {
+    const enabled = mode === 'custom'
+    updateConfig((current) => ({
+      ...current,
+      filename_convention: {
+        enabled,
+        tokens: enabled
+          ? current.filename_convention?.tokens?.length
+            ? current.filename_convention.tokens
+            : [...DEFAULT_FILENAME_TOKENS]
+          : undefined,
+        formats: enabled
+          ? {
+              version: { prefix: 'v' },
+              date: 'YYYYMMDD',
+              content: { allow_loop_suffix: true },
+            }
+          : undefined,
+      },
+    }))
+  }
+
+  function handleConventionTokens(tokens: string[]) {
+    updateConfig((current) => ({
+      ...current,
+      filename_convention: {
+        ...current.filename_convention,
+        enabled: true,
+        tokens,
+        formats: current.filename_convention?.formats ?? {
+          version: { prefix: 'v' },
+          date: 'YYYYMMDD',
+          content: { allow_loop_suffix: true },
+        },
+      },
+    }))
+  }
+
+  function updateScreenVideoSpec(
+    index: number,
+    field: 'framerate' | 'color_space' | 'color_range',
+    value: number | string | null,
+  ) {
+    updateConfig((current) => {
+      const screens = [...current.screens]
+      const row = { ...screens[index] }
+      const base: ScreenExpectedSpecs = row.expected_specs ?? screenSpecsFromShow(current)
+      if (field === 'framerate') {
+        row.expected_specs = {
+          ...base,
+          framerate: typeof value === 'number' ? value : null,
+        }
+      } else if (field === 'color_space') {
+        row.expected_specs = {
+          ...base,
+          color_space: typeof value === 'string' ? value : null,
+        }
+      } else {
+        row.expected_specs = {
+          ...base,
+          color_range: typeof value === 'string' ? value : null,
+        }
+      }
+      screens[index] = row
+      return { ...current, screens }
+    })
   }
 
   async function handleLoadPreset() {
@@ -495,6 +852,8 @@ export function ConfigView({ show, onSaved, onDirtyChange }: ConfigViewProps) {
     )
   }
 
+  const perScreenOutput = isPerScreenOutput(config)
+
   return (
     <div className="config">
       <header className="config-header">
@@ -550,6 +909,24 @@ export function ConfigView({ show, onSaved, onDirtyChange }: ConfigViewProps) {
               error={fieldErrors.show_date}
             />
             <h3 className="config-section-title">Operator</h3>
+            <label className="field">
+              <span>Company name</span>
+              <input
+                type="text"
+                value={config.operator.company_name ?? ''}
+                onChange={(event) =>
+                  updateConfig((current) => ({
+                    ...current,
+                    operator: { ...current.operator, company_name: event.target.value },
+                  }))
+                }
+                placeholder="Prestige AV"
+              />
+              <span className="field-hint">Appears in the delivery spec document header</span>
+              {fieldErrors.company_name && (
+                <span className="config-field-error">{fieldErrors.company_name}</span>
+              )}
+            </label>
             <div className="config-two-col">
               <label className="field">
                 <span>Operator Name</span>
@@ -584,6 +961,70 @@ export function ConfigView({ show, onSaved, onDirtyChange }: ConfigViewProps) {
                 )}
               </label>
             </div>
+            <h3 className="config-section-title">Intake Mode</h3>
+            <label className="field">
+              <span>How files are routed during intake</span>
+              <select
+                value={config.intake?.mode ?? 'routed'}
+                onChange={(event) =>
+                  updateConfig((current) => ({
+                    ...current,
+                    intake: {
+                      mode: event.target.value as 'routed' | 'flat',
+                    },
+                  }))
+                }
+              >
+                <option value="routed">Routed — filename selects the screen folder</option>
+                <option value="flat">Flat — validate against any screen; copy to _INCOMING</option>
+              </select>
+              <span className="config-screens-lead">
+                Flat intake keeps original filenames. Passing files land in Media\_INCOMING;
+                strict spec failures go to _REVIEW.
+              </span>
+            </label>
+            <h3 className="config-section-title">Delivery</h3>
+            <label className="field">
+              <span>Show token (short show code for filenames)</span>
+              <input
+                type="text"
+                value={config.delivery?.show_token ?? ''}
+                onChange={(event) =>
+                  updateConfig((current) => ({
+                    ...current,
+                    delivery: { ...current.delivery, show_token: event.target.value },
+                  }))
+                }
+                placeholder="e.g. CorpEvent26"
+              />
+              <span className="config-screens-lead">
+                Optional unless included in a custom filename convention.
+              </span>
+              {fieldErrors.show_token && (
+                <span className="config-field-error">{fieldErrors.show_token}</span>
+              )}
+            </label>
+            <label className="field">
+              <span>Vendor notes (optional)</span>
+              <textarea
+                className="config-notes-textarea"
+                rows={4}
+                value={config.delivery?.vendor_notes ?? ''}
+                onChange={(event) =>
+                  updateConfig((current) => ({
+                    ...current,
+                    delivery: { ...current.delivery, vendor_notes: event.target.value },
+                  }))
+                }
+                placeholder="Additional instructions for content creators — included in the delivery spec when set"
+              />
+              <span className="config-screens-lead">
+                Appears in the generated delivery spec document before Key Rules.
+              </span>
+              {fieldErrors.vendor_notes && (
+                <span className="config-field-error">{fieldErrors.vendor_notes}</span>
+              )}
+            </label>
           </div>
         )}
 
@@ -664,93 +1105,183 @@ export function ConfigView({ show, onSaved, onDirtyChange }: ConfigViewProps) {
               </div>
             )}
 
-            <h3 className="config-section-title">Technical Specifications</h3>
-            <div className="config-spec-grid">
-              <SpecSelect
-                label="Framerate (fps)"
-                value={config.expected_specs.framerate}
-                options={FRAMERATE_OPTIONS}
-                numeric
-                onChange={(value) =>
-                  updateConfig((current) =>
-                    syncAutoIgnore({
-                      ...current,
-                      expected_specs: {
-                        ...current.expected_specs,
-                        framerate: typeof value === 'number' ? value : null,
-                      },
-                    }),
-                  )
+            <h3 className="config-section-title">Output Specifications</h3>
+            <label className="field">
+              <span>Do all screens share the same video specs?</span>
+              <select
+                value={outputSpecsMode(config)}
+                onChange={(event) =>
+                  handleOutputModeChange(event.target.value as 'uniform' | 'per_screen')
                 }
-              />
-              <SpecSelect
-                label="Color Space"
-                value={config.expected_specs.color_space}
-                options={COLOR_SPACE_OPTIONS}
-                onChange={(value) =>
-                  updateConfig((current) =>
-                    syncAutoIgnore({
-                      ...current,
-                      expected_specs: {
-                        ...current.expected_specs,
-                        color_space: typeof value === 'string' ? value : null,
-                      },
-                    }),
-                  )
-                }
-              />
-              <SpecSelect
-                label="Color Range"
-                value={config.expected_specs.color_range}
-                options={COLOR_RANGE_OPTIONS}
-                onChange={(value) =>
-                  updateConfig((current) =>
-                    syncAutoIgnore({
-                      ...current,
-                      expected_specs: {
-                        ...current.expected_specs,
-                        color_range: typeof value === 'string' ? value : null,
-                      },
-                    }),
-                  )
-                }
-              />
-              <SpecSelect
-                label="Audio Sample Rate"
-                value={config.expected_specs.audio_sample_rate}
-                options={AUDIO_RATE_OPTIONS}
-                numeric
-                onChange={(value) =>
-                  updateConfig((current) =>
-                    syncAutoIgnore({
-                      ...current,
-                      expected_specs: {
-                        ...current.expected_specs,
-                        audio_sample_rate: typeof value === 'number' ? value : null,
-                      },
-                    }),
-                  )
-                }
-              />
-              <SpecSelect
-                label="Audio Channels"
-                value={config.expected_specs.audio_channels}
-                options={AUDIO_CHANNEL_OPTIONS}
-                numeric
-                onChange={(value) =>
-                  updateConfig((current) =>
-                    syncAutoIgnore({
-                      ...current,
-                      expected_specs: {
-                        ...current.expected_specs,
-                        audio_channels: typeof value === 'number' ? value : null,
-                      },
-                    }),
-                  )
-                }
-              />
-            </div>
+              >
+                <option value="uniform">Same specs for all screens</option>
+                <option value="per_screen">Specs vary by screen (LED + projector mix)</option>
+              </select>
+              <span className="config-screens-lead">
+                {perScreenOutput
+                  ? 'Set framerate, color space, and color range on the Screens tab for each output.'
+                  : 'Framerate, color space, and color range below apply to every screen. Resolution is always per screen.'}
+              </span>
+            </label>
 
+            <h3 className="config-section-title">Technical Specifications</h3>
+            {!perScreenOutput ? (
+              <div className="config-spec-grid">
+                <SpecSelect
+                  label="Framerate (fps)"
+                  value={config.expected_specs.framerate}
+                  options={FRAMERATE_OPTIONS}
+                  numeric
+                  onChange={(value) =>
+                    updateConfig((current) =>
+                      syncAutoIgnore({
+                        ...current,
+                        expected_specs: {
+                          ...current.expected_specs,
+                          framerate: typeof value === 'number' ? value : null,
+                        },
+                      }),
+                    )
+                  }
+                />
+                <SpecSelect
+                  label="Color Space"
+                  value={config.expected_specs.color_space}
+                  options={COLOR_SPACE_OPTIONS}
+                  onChange={(value) =>
+                    updateConfig((current) =>
+                      syncAutoIgnore({
+                        ...current,
+                        expected_specs: {
+                          ...current.expected_specs,
+                          color_space: typeof value === 'string' ? value : null,
+                        },
+                      }),
+                    )
+                  }
+                />
+                <SpecSelect
+                  label="Color Range"
+                  value={config.expected_specs.color_range}
+                  options={COLOR_RANGE_OPTIONS}
+                  onChange={(value) =>
+                    updateConfig((current) =>
+                      syncAutoIgnore({
+                        ...current,
+                        expected_specs: {
+                          ...current.expected_specs,
+                          color_range: typeof value === 'string' ? value : null,
+                        },
+                      }),
+                    )
+                  }
+                />
+                <SpecSelect
+                  label="Audio Sample Rate"
+                  value={config.expected_specs.audio_sample_rate}
+                  options={AUDIO_RATE_OPTIONS}
+                  numeric
+                  onChange={(value) =>
+                    updateConfig((current) =>
+                      syncAutoIgnore({
+                        ...current,
+                        expected_specs: {
+                          ...current.expected_specs,
+                          audio_sample_rate: typeof value === 'number' ? value : null,
+                        },
+                      }),
+                    )
+                  }
+                />
+                <SpecSelect
+                  label="Audio Channels"
+                  value={config.expected_specs.audio_channels}
+                  options={AUDIO_CHANNEL_OPTIONS}
+                  numeric
+                  onChange={(value) =>
+                    updateConfig((current) =>
+                      syncAutoIgnore({
+                        ...current,
+                        expected_specs: {
+                          ...current.expected_specs,
+                          audio_channels: typeof value === 'number' ? value : null,
+                        },
+                      }),
+                    )
+                  }
+                />
+              </div>
+            ) : (
+              <div className="config-spec-grid">
+                <SpecSelect
+                  label="Audio Sample Rate"
+                  value={config.expected_specs.audio_sample_rate}
+                  options={AUDIO_RATE_OPTIONS}
+                  numeric
+                  onChange={(value) =>
+                    updateConfig((current) =>
+                      syncAutoIgnore({
+                        ...current,
+                        expected_specs: {
+                          ...current.expected_specs,
+                          audio_sample_rate: typeof value === 'number' ? value : null,
+                        },
+                      }),
+                    )
+                  }
+                />
+                <SpecSelect
+                  label="Audio Channels"
+                  value={config.expected_specs.audio_channels}
+                  options={AUDIO_CHANNEL_OPTIONS}
+                  numeric
+                  onChange={(value) =>
+                    updateConfig((current) =>
+                      syncAutoIgnore({
+                        ...current,
+                        expected_specs: {
+                          ...current.expected_specs,
+                          audio_channels: typeof value === 'number' ? value : null,
+                        },
+                      }),
+                    )
+                  }
+                />
+              </div>
+            )}
+
+            <h3 className="config-section-title">Filename Convention</h3>
+            <label className="field">
+              <span>Delivery filename pattern</span>
+              <select
+                value={conventionEnabled(config) ? 'custom' : 'default'}
+                onChange={(event) =>
+                  handleConventionMode(event.target.value as 'default' | 'custom')
+                }
+              >
+                <option value="default">Default — SCR##_content_v##_YYYYMMDD</option>
+                <option value="custom">Custom — build your own token order</option>
+              </select>
+              <span className="config-screens-lead">
+                {conventionEnabled(config)
+                  ? 'Drag tokens to set order. Original filenames are never renamed on intake.'
+                  : (
+                      <>
+                        Example: <code>{exampleFilename}</code>
+                      </>
+                    )}
+              </span>
+            </label>
+            {conventionEnabled(config) && (
+              <FilenameTokenBuilder
+                tokens={config.filename_convention?.tokens ?? [...DEFAULT_FILENAME_TOKENS]}
+                onChange={handleConventionTokens}
+                example={exampleFilename}
+                error={fieldErrors.filename_convention}
+              />
+            )}
+
+            <h3 className="config-section-title">Codecs</h3>
             <CodecTags
               title="Expected Codecs"
               description="File must use one of these"
@@ -780,34 +1311,55 @@ export function ConfigView({ show, onSaved, onDirtyChange }: ConfigViewProps) {
           <div className="config-screens">
             <div className="config-screens-header">
               <p className="config-screens-lead">
-                Define output screens. IDs must be unique (e.g., SCR01). Screen additions update
-                the Dashboard after saving.
+                Define output screens. IDs must be unique (e.g., SCR01).
+                {perScreenOutput
+                  ? ' Set framerate, color space, and color range per screen below.'
+                  : ' Video specs are shared — configure them on the Expected Specs tab.'}
               </p>
               <button
                 type="button"
                 className="btn-secondary"
                 onClick={() =>
-                  updateConfig((current) => ({
-                    ...current,
-                    screens: [
-                      ...current.screens,
-                      { id: '', name: '', resolution: RESOLUTION_OPTIONS[1] },
-                    ],
-                  }))
+                  updateConfig((current) => {
+                    const newScreen: ShowConfigData['screens'][number] = {
+                      id: '',
+                      name: '',
+                      resolution: RESOLUTION_OPTIONS[1],
+                    }
+                    if (isPerScreenOutput(current)) {
+                      newScreen.expected_specs = screenSpecsFromShow(current)
+                    }
+                    return {
+                      ...current,
+                      screens: [...current.screens, newScreen],
+                    }
+                  })
                 }
               >
                 + Add Screen
               </button>
             </div>
             <div className="config-screen-table">
-              <div className="config-screen-row config-screen-head">
-                <span>Screen ID</span>
-                <span>Display Name</span>
-                <span>Resolution</span>
-                <span />
+              <div
+                className={`config-screen-row config-screen-head${perScreenOutput ? ' config-screen-row-per-screen' : ''}`}
+              >
+                <span className="config-screen-head-label">Screen ID</span>
+                <span className="config-screen-head-label">Display Name</span>
+                <span className="config-screen-head-label">Resolution</span>
+                {perScreenOutput && (
+                  <>
+                    <span className="config-screen-head-label">Framerate</span>
+                    <span className="config-screen-head-label">Color Space</span>
+                    <span className="config-screen-head-label">Color Range</span>
+                  </>
+                )}
+                <span className="config-screen-head-action" aria-hidden="true" />
               </div>
               {config.screens.map((screen, index) => (
-                <div key={index} className="config-screen-row">
+                <div
+                  key={index}
+                  className={`config-screen-row${perScreenOutput ? ' config-screen-row-per-screen' : ''}`}
+                >
                   <label className="field">
                     <input
                       type="text"
@@ -894,6 +1446,29 @@ export function ConfigView({ show, onSaved, onDirtyChange }: ConfigViewProps) {
                       </span>
                     )}
                   </label>
+                  {perScreenOutput && (
+                    <>
+                      <SpecSelect
+                        compact
+                        value={screen.expected_specs?.framerate ?? null}
+                        options={FRAMERATE_OPTIONS}
+                        numeric
+                        onChange={(value) => updateScreenVideoSpec(index, 'framerate', value)}
+                      />
+                      <SpecSelect
+                        compact
+                        value={screen.expected_specs?.color_space ?? null}
+                        options={COLOR_SPACE_OPTIONS}
+                        onChange={(value) => updateScreenVideoSpec(index, 'color_space', value)}
+                      />
+                      <SpecSelect
+                        compact
+                        value={screen.expected_specs?.color_range ?? null}
+                        options={COLOR_RANGE_OPTIONS}
+                        onChange={(value) => updateScreenVideoSpec(index, 'color_range', value)}
+                      />
+                    </>
+                  )}
                   <button
                     type="button"
                     className="config-screen-delete"
@@ -910,14 +1485,49 @@ export function ConfigView({ show, onSaved, onDirtyChange }: ConfigViewProps) {
                 </div>
               ))}
             </div>
+
+            {config.screens.length > 0 && (
+              <div className="config-screen-notes-section">
+                <h3 className="config-section-title">Screen configuration notes</h3>
+                <p className="config-screens-lead">
+                  Appears below the Screen Configuration table in the delivery spec. The Notes
+                  column in the table is left blank for you to fill in manually in Word after
+                  generation.
+                </p>
+                <label className="field">
+                  <textarea
+                    className="config-notes-textarea"
+                    rows={4}
+                    value={config.delivery?.optional_screen_notes ?? ''}
+                    placeholder={DEFAULT_SCREEN_NOTES}
+                    onChange={(event) =>
+                      updateConfig((current) => ({
+                        ...current,
+                        delivery: {
+                          ...current.delivery,
+                          optional_screen_notes: event.target.value,
+                        },
+                      }))
+                    }
+                  />
+                  {fieldErrors.optional_screen_notes && (
+                    <span className="config-field-error">
+                      {fieldErrors.optional_screen_notes}
+                    </span>
+                  )}
+                </label>
+              </div>
+            )}
           </div>
         )}
 
         {activeTab === 'validation' && (
           <div className="config-validation">
             <p className="config-screens-lead">
-              Control how strictly each property is validated during intake. Fields set to N/A in
-              Expected Specs are automatically marked Ignore here.
+              Control how strictly each property is validated during intake.
+              {perScreenOutput
+                ? ' Framerate and color checks use each screen’s values from the Screens tab.'
+                : ' Fields set to N/A in Expected Specs are automatically marked Ignore here.'}
             </p>
             <div className="config-legend">
               <span className="config-legend-strict">Strict</span> = reject to _REVIEW
@@ -925,6 +1535,43 @@ export function ConfigView({ show, onSaved, onDirtyChange }: ConfigViewProps) {
               <span className="config-legend-info">Info</span> = log only
               <span className="config-legend-ignore">Ignore</span> = skip check
             </div>
+
+            <h3 className="config-section-title">Filename validation</h3>
+            <p className="config-screens-lead">
+              Example: <code>{exampleFilename}</code>
+              {(config.intake?.mode ?? 'routed') === 'flat'
+                ? ' Flat intake never blocks routing on filename issues — warnings only.'
+                : ''}
+            </p>
+            <div className="config-validation-grid">
+              {FILENAME_VALIDATION_FIELDS.filter(
+                (field) => !field.visible || field.visible(config),
+              ).map((field) => (
+                <label key={field.key} className="field">
+                  <span title={field.hint}>{field.label}</span>
+                  <select
+                    value={config.validation_strictness[field.key] ?? 'strict'}
+                    onChange={(event) =>
+                      updateConfig((current) => ({
+                        ...current,
+                        validation_strictness: {
+                          ...current.validation_strictness,
+                          [field.key]: event.target.value,
+                        },
+                      }))
+                    }
+                  >
+                    {STRICTNESS_OPTIONS.map((option) => (
+                      <option key={option} value={option}>
+                        {option}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              ))}
+            </div>
+
+            <h3 className="config-section-title">Media spec validation</h3>
             <div className="config-validation-grid">
               {VALIDATION_FIELDS.map((field) => {
                 const autoIgnore =

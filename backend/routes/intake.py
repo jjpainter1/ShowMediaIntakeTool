@@ -87,7 +87,9 @@ def _run_scan(
                 },
             )
 
-    plans, stale = build_intake_plan(source, config, show_root, progress=on_progress)
+    plans, stale = build_intake_plan(
+        source, config, show_root, progress=on_progress
+    )
     return plans, stale, config
 
 
@@ -131,10 +133,20 @@ def scan_intake(body: IntakeScanBody) -> dict:
     show_root = _resolve_show_root(body.show_path)
     source = _resolve_source(body.source_path)
     try:
-        plans, stale, _config = _run_scan(show_root, source)
+        plans, stale, config = _run_scan(
+            show_root, source
+        )
     except OSError as exc:
         raise HTTPException(status_code=400, detail=f"Scan failed: {exc}") from exc
-    return intake_scan_result_to_dict(plans, stale, show_root, source)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return intake_scan_result_to_dict(
+        plans,
+        stale,
+        show_root,
+        source,
+        intake_mode=config.intake.mode,
+    )
 
 
 @router.post("/execute")
@@ -207,14 +219,19 @@ async def scan_progress_ws(websocket: WebSocket) -> None:
         async def run_scan() -> tuple:
             return await loop.run_in_executor(
                 _executor,
-                lambda: _run_scan(show_root, source, loop, queue),
+                lambda: _run_scan(
+                    show_root, source, loop, queue
+                ),
             )
 
         drain_task = asyncio.create_task(_drain_progress_queue(websocket, queue, done))
         try:
-            plans, stale, _config = await run_scan()
+            plans, stale, config = await run_scan()
         except HTTPException as exc:
             await websocket.send_json({"type": "error", "message": exc.detail})
+            return
+        except ValueError as exc:
+            await websocket.send_json({"type": "error", "message": str(exc)})
             return
         except OSError as exc:
             await websocket.send_json({"type": "error", "message": f"Scan failed: {exc}"})
@@ -223,7 +240,13 @@ async def scan_progress_ws(websocket: WebSocket) -> None:
             done.set()
             await drain_task
 
-        result = intake_scan_result_to_dict(plans, stale, show_root, source)
+        result = intake_scan_result_to_dict(
+            plans,
+            stale,
+            show_root,
+            source,
+            intake_mode=config.intake.mode,
+        )
         await websocket.send_json({"type": "complete", **result})
     except WebSocketDisconnect:
         return

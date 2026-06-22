@@ -93,8 +93,8 @@ def pick_delivery_source_folder(
 ) -> Path | None:
     """Pick a delivery source folder using the standard Windows folder dialog.
 
-    TODO(v2.1): Revisit a custom browser that lists media files in-folder.
-    The prototype in delivery_folder_picker.py lacked drive switching (C: vs D:).
+    TODO(v2.1): Revisit a custom browser that lists media files in-folder
+    (would need drive switching, e.g. C: vs D:).
   """
     _ = start_dir  # reserved for a future picker that honors initial directory
     return pick_folder_native(title)

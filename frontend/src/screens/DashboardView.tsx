@@ -176,7 +176,7 @@ export function DashboardView({
           <button type="button" className="btn-primary" onClick={() => onNavigate('intake')}>
             ↓ Intake Delivery
           </button>
-          <button type="button" className="btn-secondary" disabled title="Coming in a later phase">
+          <button type="button" className="btn-secondary" onClick={() => onNavigate('spec')}>
             ⎘ Generate Spec
           </button>
         </div>

@@ -15,8 +15,8 @@ def health() -> dict:
     """Return readiness info for the desktop shell."""
     return {
         "status": "ok",
-        "phase": 5,
-        "api_features": ["pick_delivery_source", "config_editor"],
+        "phase": 6,
+        "api_features": ["pick_delivery_source", "config_editor", "spec_generator"],
         "ffprobe_available": check_ffprobe_available(),
         "user_data_root": str(get_user_data_root()),
     }

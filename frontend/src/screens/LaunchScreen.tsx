@@ -23,7 +23,7 @@ export function LaunchScreen({
       <div className="launch-inner">
         <header className="launch-header">
           <h1>Show Media Intake Tool</h1>
-          <p className="launch-subtitle">v2.0 · by JJ Painter</p>
+          <p className="launch-subtitle">v2.1.1 · by JJ Painter</p>
         </header>
 
         {error && (

@@ -10,6 +10,7 @@ import {
 import {
   ApiError,
   executeIntake,
+  fetchShowConfig,
   formatIntakeError,
   openIntakeLog,
   scanIntake,
@@ -17,10 +18,12 @@ import {
   type IntakeExecuteResult,
   type IntakeFilePlan,
   type IntakeScanResult,
+  type ShowConfigData,
   type ShowSummary,
 } from '../lib/api'
 import { pickDeliverySource } from '../lib/folderPicker'
 import { formatFileSize } from '../lib/format'
+import { getIntakeSourcePath, saveIntakeSourcePath } from '../lib/intakeSourceStorage'
 
 type IntakePhase = 'select' | 'scanning' | 'plan' | 'copying' | 'complete'
 
@@ -131,7 +134,7 @@ function conflictLabel(plan: IntakeFilePlan): string | null {
 
 export function IntakeView({ show, onBusyChange, onComplete }: IntakeViewProps) {
   const [phase, setPhase] = useState<IntakePhase>('select')
-  const [sourcePath, setSourcePath] = useState('')
+  const [sourcePath, setSourcePath] = useState(() => getIntakeSourcePath(show.path))
   const [scanProgress, setScanProgress] = useState({ current: 0, total: 0, filename: '' })
   const [scanResult, setScanResult] = useState<IntakeScanResult | null>(null)
   const [filter, setFilter] = useState<PlanFilter>('all')
@@ -141,6 +144,7 @@ export function IntakeView({ show, onBusyChange, onComplete }: IntakeViewProps) 
   const [copyLog, setCopyLog] = useState<{ text: string; tone: 'default' | 'ok' | 'fail' }[]>([])
   const [executeResult, setExecuteResult] = useState<IntakeExecuteResult | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [showConfig, setShowConfig] = useState<ShowConfigData | null>(null)
   const [copiedOpen, setCopiedOpen] = useState(true)
   const [reviewOpen, setReviewOpen] = useState(true)
   const [skippedOpen, setSkippedOpen] = useState(false)
@@ -148,6 +152,43 @@ export function IntakeView({ show, onBusyChange, onComplete }: IntakeViewProps) 
   const copyDoneRef = useRef(0)
 
   const busy = phase === 'scanning' || phase === 'copying'
+  const isFlatIntake = showConfig?.intake?.mode === 'flat'
+  const canScan = Boolean(sourcePath.trim())
+
+  useEffect(() => {
+    let cancelled = false
+    void fetchShowConfig(show.path)
+      .then((config) => {
+        if (!cancelled) {
+          setShowConfig({
+            ...config,
+            intake: config.intake ?? { mode: 'routed' },
+          })
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setShowConfig(null)
+        }
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [show.path])
+
+  useEffect(() => {
+    setSourcePath(getIntakeSourcePath(show.path))
+    setPhase('select')
+    setScanResult(null)
+    setExecuteResult(null)
+    setCopyLog([])
+    setError(null)
+    setFilter('all')
+  }, [show.path])
+
+  useEffect(() => {
+    saveIntakeSourcePath(show.path, sourcePath)
+  }, [show.path, sourcePath])
 
   useEffect(() => {
     onBusyChange(busy)
@@ -205,16 +246,20 @@ export function IntakeView({ show, onBusyChange, onComplete }: IntakeViewProps) 
   }
 
   async function handleScan() {
-    if (!sourcePath.trim()) {
+    if (!canScan) {
       return
     }
     setError(null)
     setPhase('scanning')
     setScanProgress({ current: 0, total: 0, filename: '' })
     try {
-      const result = await scanIntake(show.path, sourcePath.trim(), (progress) => {
-        setScanProgress(progress)
-      })
+      const result = await scanIntake(
+        show.path,
+        sourcePath.trim(),
+        (progress) => {
+          setScanProgress(progress)
+        },
+      )
       if (!result?.plans || !Array.isArray(result.plans)) {
         throw new Error('Scan returned an invalid response from the server')
       }
@@ -299,7 +344,9 @@ export function IntakeView({ show, onBusyChange, onComplete }: IntakeViewProps) 
         <header className="intake-header">
           <h1>Intake New Content Delivery</h1>
           <p className="intake-lead">
-            Select the source folder containing delivery files to scan and import into the show.
+            {isFlatIntake
+              ? 'Flat intake: scan a delivery folder. Valid files copy to Media\\_INCOMING with original names; strict spec failures go to _REVIEW.'
+              : 'Select the source folder containing delivery files to scan and import into the show.'}
           </p>
         </header>
 
@@ -329,7 +376,7 @@ export function IntakeView({ show, onBusyChange, onComplete }: IntakeViewProps) 
           <button
             type="button"
             className="btn-primary intake-scan-btn"
-            disabled={!sourcePath.trim()}
+            disabled={!canScan}
             onClick={() => void handleScan()}
           >
             🔍 Scan Folder
@@ -372,6 +419,7 @@ export function IntakeView({ show, onBusyChange, onComplete }: IntakeViewProps) 
             <p className="intake-meta">
               {scanResult.source_path} · {scanResult.plans.length} file
               {scanResult.plans.length === 1 ? '' : 's'}
+              {scanResult.intake_mode === 'flat' ? ' · Flat → Media\\_INCOMING\\' : ''}
             </p>
           </div>
           <div className="intake-plan-actions">

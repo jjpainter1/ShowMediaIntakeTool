@@ -13,7 +13,7 @@ if str(_ROOT) not in sys.path:
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from backend.routes import codecs, health, intake, presets, shows, system
+from backend.routes import codecs, health, intake, presets, shows, spec, system
 
 app = FastAPI(
     title="Show Media Intake Tool API",
@@ -26,8 +26,9 @@ app.add_middleware(
     allow_origins=[
         "http://localhost:1420",
         "http://localhost:5173",
-        "tauri://localhost",
+        "http://tauri.localhost",  # Tauri 2 production (Windows default)
         "https://tauri.localhost",
+        "tauri://localhost",
     ],
     allow_credentials=True,
     allow_methods=["*"],
@@ -39,6 +40,7 @@ app.include_router(shows.router, prefix="/api")
 app.include_router(intake.router, prefix="/api")
 app.include_router(presets.router, prefix="/api")
 app.include_router(codecs.router, prefix="/api")
+app.include_router(spec.router, prefix="/api")
 app.include_router(system.router, prefix="/api")
 
 

@@ -8,7 +8,13 @@ from enum import Enum, auto
 from collections.abc import Callable
 from pathlib import Path
 
-from modules.config import ShowConfig
+from modules.config import (
+    ShowConfig,
+    effective_specs_for_screen,
+    find_screen,
+    is_flat_intake,
+    strictness_level,
+)
 from modules.console_ui import (
     format_filesize,
     print_blank,
@@ -20,6 +26,7 @@ from modules.console_ui import (
     print_warning,
     prompt_yes_no,
     pick_folder,
+    prompt_menu,
     prompt_path_input,
 )
 from modules.filename_parser import (
@@ -28,7 +35,7 @@ from modules.filename_parser import (
     ParseResult,
     ParsedFilename,
     PartialMatch,
-    is_valid_prefix,
+    is_valid_screen_prefix,
     parse_filename,
 )
 from modules.ffprobe_wrapper import MediaSpecs, codec_tag_to_identifier, probe_file
@@ -40,6 +47,10 @@ from colorama import Fore, Style
 # ---------------------------------------------------------------------------
 # Enums + data classes
 # ---------------------------------------------------------------------------
+
+# Flat intake lands validated files here until the operator assigns them in Pixera.
+FLAT_INTAKE_FOLDER = "_INCOMING"
+
 
 class Action(Enum):
     """Planned action for a single source file during intake."""
@@ -99,90 +110,105 @@ def walk_source(source: Path) -> list[Path]:
 def plan_file(source_path: Path, config: ShowConfig, show_root: Path) -> FilePlan:
     """Determine the action and destination for a single source file."""
     filename = source_path.name
-    parsed   = parse_filename(filename)
+    parsed = parse_filename(filename, config)
+    review_path = show_root / "Media" / "_REVIEW" / filename
+    warnings: list[str] = []
+    failures: list[str] = []
 
-    # --- NoMatch: route straight to _REVIEW ---
+    validate_filename(parsed, config, warnings, failures)
+
     if isinstance(parsed, NoMatch):
+        specs = probe_file(source_path)
+        if specs.probe_succeeded:
+            validate_file_specs(specs, config, warnings, failures)
+        else:
+            failures.append(f"Could not read file metadata: {specs.probe_error}")
         plan = FilePlan(
             source_path=source_path,
             parsed=parsed,
-            specs=None,
+            specs=specs if specs.probe_succeeded else None,
             target_screen=None,
-            destination_path=show_root / "Media" / "_REVIEW" / filename,
+            destination_path=review_path,
             action=Action.ROUTE_TO_REVIEW,
-            failures=["Filename does not match convention"],
+            failures=failures,
+            warnings=warnings,
         )
         return _apply_existing_file_check(plan, source_path, show_root)
 
-    # --- Determine screen prefix and destination folder ---
     if isinstance(parsed, PartialMatch):
         screen_prefix = parsed.screen_prefix
-    else:  # FullMatch
+    else:
         screen_prefix = parsed.parsed.screen_prefix
 
-    dest_folder = _dest_folder(screen_prefix, show_root)
-    dest_path   = dest_folder / filename
-    target_screen = screen_prefix if re.match(r"^SCR\d{2}$", screen_prefix) else None
+    screen_routable = is_valid_screen_prefix(screen_prefix, config)
+    screen_cfg = find_screen(config, screen_prefix)
+    dest_path = (
+        _dest_folder(screen_prefix, show_root) / filename
+        if screen_routable
+        else review_path
+    )
+    target_screen = screen_prefix if screen_cfg else None
 
-    # --- PartialMatch: invalid prefix → _REVIEW; valid prefix → copy with warnings ---
     if isinstance(parsed, PartialMatch):
-        # Run ffprobe to get file specs even though we'll route to review or warn
         specs = probe_file(source_path)
         if not specs.probe_succeeded:
-            failures = [f"Could not read file metadata: {specs.probe_error}"]
+            failures.append(f"Could not read file metadata: {specs.probe_error}")
             return FilePlan(
                 source_path=source_path,
                 parsed=parsed,
                 specs=specs,
                 target_screen=None,
-                destination_path=show_root / "Media" / "_REVIEW" / filename,
+                destination_path=review_path,
                 action=Action.ROUTE_TO_REVIEW,
                 failures=failures,
+                warnings=warnings,
             )
-        if not is_valid_prefix(screen_prefix):
-            plan = FilePlan(
-                source_path=source_path,
-                parsed=parsed,
-                specs=specs,
-                target_screen=None,
-                destination_path=show_root / "Media" / "_REVIEW" / filename,
-                action=Action.ROUTE_TO_REVIEW,
-                failures=list(parsed.problems),
-            )
-            return _apply_existing_file_check(plan, source_path, show_root)
+        validate_file_specs(
+            specs,
+            config,
+            warnings,
+            failures,
+            target_screen_id=screen_prefix if screen_cfg else None,
+        )
+        action = _filename_action(failures, warnings, screen_routable)
+        if failures or not screen_routable:
+            dest_path = review_path
         plan = FilePlan(
             source_path=source_path,
             parsed=parsed,
             specs=specs,
-            target_screen=target_screen,
+            target_screen=target_screen if screen_routable else None,
             destination_path=dest_path,
-            action=Action.COPY_WITH_WARNING,
-            warnings=list(parsed.problems),
+            action=action,
+            warnings=warnings,
+            failures=failures,
         )
         return _apply_existing_file_check(plan, source_path, show_root)
 
-    # --- FullMatch: run ffprobe then validate specs ---
     specs = probe_file(source_path)
-    warnings: list[str] = []
-    failures: list[str] = []
-
     if not specs.probe_succeeded:
-        failures.append(f"Could not read file metadata: {specs.probe_error}")
         return FilePlan(
             source_path=source_path,
             parsed=parsed,
             specs=specs,
             target_screen=target_screen,
-            destination_path=show_root / "Media" / "_REVIEW" / filename,
+            destination_path=review_path,
             action=Action.ROUTE_TO_REVIEW,
-            failures=failures,
+            failures=[f"Could not read file metadata: {specs.probe_error}"],
+            warnings=warnings,
         )
 
-    _validate_specs(parsed.parsed, specs, config, warnings, failures)
+    validate_file_specs(
+        specs,
+        config,
+        warnings,
+        failures,
+        parsed=parsed.parsed,
+    )
 
     if failures:
         action = Action.ROUTE_TO_REVIEW
-        dest_path = show_root / "Media" / "_REVIEW" / filename
+        dest_path = review_path
     elif warnings:
         action = Action.COPY_WITH_WARNING
     else:
@@ -193,6 +219,69 @@ def plan_file(source_path: Path, config: ShowConfig, show_root: Path) -> FilePla
         parsed=parsed,
         specs=specs,
         target_screen=target_screen,
+        destination_path=dest_path,
+        action=action,
+        warnings=warnings,
+        failures=failures,
+    )
+    return _apply_existing_file_check(plan, source_path, show_root)
+
+
+def plan_file_flat(
+    source_path: Path,
+    config: ShowConfig,
+    show_root: Path,
+) -> FilePlan:
+    """Plan a file for flat intake: union spec validation; copy to Media/_INCOMING."""
+    filename = source_path.name
+    parsed = parse_filename(filename, config)
+    incoming_folder = _flat_dest_folder(show_root)
+    dest_path = incoming_folder / filename
+    review_path = show_root / "Media" / "_REVIEW" / filename
+    warnings: list[str] = []
+    failures: list[str] = []
+
+    if not config.screens:
+        return FilePlan(
+            source_path=source_path,
+            parsed=parsed,
+            specs=None,
+            target_screen=None,
+            destination_path=review_path,
+            action=Action.ROUTE_TO_REVIEW,
+            failures=["Flat intake requires at least one screen in config"],
+        )
+
+    validate_filename(parsed, config, warnings, failures, flat_mode=True)
+
+    specs = probe_file(source_path)
+    if not specs.probe_succeeded:
+        failures.append(f"Could not read file metadata: {specs.probe_error}")
+        return FilePlan(
+            source_path=source_path,
+            parsed=parsed,
+            specs=specs,
+            target_screen=None,
+            destination_path=review_path,
+            action=Action.ROUTE_TO_REVIEW,
+            failures=failures,
+        )
+
+    validate_file_specs_flat(specs, config, warnings, failures)
+
+    if failures:
+        action = Action.ROUTE_TO_REVIEW
+        dest_path = review_path
+    elif warnings:
+        action = Action.COPY_WITH_WARNING
+    else:
+        action = Action.COPY
+
+    plan = FilePlan(
+        source_path=source_path,
+        parsed=parsed,
+        specs=specs,
+        target_screen=None,
         destination_path=dest_path,
         action=action,
         warnings=warnings,
@@ -215,20 +304,31 @@ def build_intake_plan(
 
     progress(current, total, filename) is called after each file is planned.
     """
+    if is_flat_intake(config) and not config.screens:
+        raise ValueError("Flat intake requires at least one screen in config")
+
     ensure_media_structure(show_root, config)
     files = walk_source(source)
     total = len(files)
     plans: list[FilePlan] = []
     for index, file_path in enumerate(files, start=1):
-        plans.append(plan_file(file_path, config, show_root))
+        if is_flat_intake(config):
+            plans.append(plan_file_flat(file_path, config, show_root))
+        else:
+            plans.append(plan_file(file_path, config, show_root))
         if progress is not None:
             progress(index, total, file_path.name)
-    plans = detect_version_conflicts(plans, show_root)
+    if not is_flat_intake(config):
+        plans = detect_version_conflicts(plans, show_root, config)
     stale = detect_stale_folders(show_root, config)
     return plans, stale
 
 
-def detect_version_conflicts(plans: list[FilePlan], show_root: Path) -> list[FilePlan]:
+def detect_version_conflicts(
+    plans: list[FilePlan],
+    show_root: Path,
+    config: ShowConfig,
+) -> list[FilePlan]:
     """Populate version_conflict on plans where an older version already exists."""
     for plan in plans:
         if plan.action not in (Action.COPY, Action.COPY_WITH_WARNING):
@@ -245,7 +345,7 @@ def detect_version_conflicts(plans: list[FilePlan], show_root: Path) -> list[Fil
         for existing_file in dest_folder.iterdir():
             if not existing_file.is_file():
                 continue
-            result = parse_filename(existing_file.name)
+            result = parse_filename(existing_file.name, config)
             if not isinstance(result, FullMatch):
                 continue
             ep = result.parsed
@@ -476,11 +576,14 @@ def write_intake_log(
     lines: list[str] = []
     ts_human = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
+    intake_label = "flat" if is_flat_intake(config) else "routed"
     lines += [
         "=" * 70,
         f"  SHOW MEDIA INTAKE LOG",
         f"  Generated: {ts_human}",
         f"  Show:      {config.show_name} ({config.show_date})",
+        f"  Intake:    {intake_label}"
+        + (f" → Media\\{FLAT_INTAKE_FOLDER}\\" if is_flat_intake(config) else ""),
         f"  Source:    {source}",
         f"  Files:     {len(plans)} found",
         "=" * 70,
@@ -546,6 +649,10 @@ def write_intake_log(
 def run_intake(show_root: Path, config: ShowConfig) -> None:
     """Full intake workflow: pick source, plan, confirm, execute, log."""
     print_blank()
+    if is_flat_intake(config) and not config.screens:
+        print_error("Flat intake requires at least one screen in config.")
+        return
+
     print("  Select the source folder containing the delivery.")
     source = pick_folder("Select delivery source folder")
     if source is None:
@@ -556,20 +663,22 @@ def run_intake(show_root: Path, config: ShowConfig) -> None:
         print_error(f"Source folder not found: {source}")
         return
 
-    # Ensure destination structure exists before we start planning
-    ensure_media_structure(show_root, config)
-
     print_blank()
     print(f"  Scanning {source} ...")
 
-    files = walk_source(source)
-    if not files:
-        print_warning("No files found in source folder.")
+    try:
+        plans, stale = build_intake_plan(
+            source,
+            config,
+            show_root,
+        )
+    except ValueError as exc:
+        print_error(str(exc))
         return
 
-    plans = [plan_file(f, config, show_root) for f in files]
-    plans = detect_version_conflicts(plans, show_root)
-    stale = detect_stale_folders(show_root, config)
+    if not plans:
+        print_warning("No files found in source folder.")
+        return
 
     print_blank()
     display_plan(plans, stale, config, source)
@@ -611,6 +720,10 @@ def run_intake(show_root: Path, config: ShowConfig) -> None:
 
 def _dest_folder(screen_prefix: str, show_root: Path) -> Path:
     return show_root / "Media" / screen_prefix
+
+
+def _flat_dest_folder(show_root: Path) -> Path:
+    return show_root / "Media" / FLAT_INTAKE_FOLDER
 
 
 def _unique_review_path(dest: Path) -> Path:
@@ -661,63 +774,241 @@ def _apply_existing_file_check(plan: FilePlan, source_path: Path, show_root: Pat
     return plan
 
 
-def _validate_specs(
-    parsed:   ParsedFilename,
-    specs:    MediaSpecs,
-    config:   ShowConfig,
+def _apply_validation_level(
+    level: str,
+    message: str,
+    warnings: list[str],
+    failures: list[str],
+    *,
+    flat_mode: bool = False,
+) -> None:
+    """Apply a strictness level to warnings/failures lists."""
+    if level == "ignore":
+        return
+    if flat_mode:
+        if level in ("strict", "warn", "info"):
+            warnings.append(message)
+        return
+    if level == "strict":
+        failures.append(message)
+    else:
+        warnings.append(message)
+
+
+def _is_show_token_problem(message: str) -> bool:
+    lower = message.lower()
+    return "show token" in lower
+
+
+def _is_screen_problem(message: str) -> bool:
+    lower = message.lower()
+    return (
+        "not a valid screen" in lower
+        or "not a valid prefix" in lower
+        or "no recognisable screen" in lower
+        or "unrecognised scr prefix" in lower
+    )
+
+
+def validate_filename(
+    parsed: ParseResult,
+    config: ShowConfig,
+    warnings: list[str],
+    failures: list[str],
+    *,
+    flat_mode: bool = False,
+) -> None:
+    """Apply filename strictness rules. Modifies warnings/failures in place."""
+    if isinstance(parsed, NoMatch):
+        level = strictness_level(config, "filename_convention")
+        _apply_validation_level(
+            level,
+            "Filename does not match convention",
+            warnings,
+            failures,
+            flat_mode=flat_mode,
+        )
+        for problem in parsed.problems:
+            _apply_validation_level(
+                level,
+                problem,
+                warnings,
+                failures,
+                flat_mode=flat_mode,
+            )
+        return
+
+    if isinstance(parsed, PartialMatch):
+        screen_prefix = parsed.screen_prefix
+        screen_valid = is_valid_screen_prefix(screen_prefix, config)
+        for problem in parsed.problems:
+            if _is_show_token_problem(problem):
+                level = strictness_level(config, "show_token")
+            elif _is_screen_problem(problem) or not screen_valid:
+                level = strictness_level(config, "screen_id")
+            else:
+                level = strictness_level(config, "filename_format")
+            _apply_validation_level(
+                level,
+                problem,
+                warnings,
+                failures,
+                flat_mode=flat_mode,
+            )
+        if not screen_valid and not any(_is_screen_problem(p) for p in parsed.problems):
+            _apply_validation_level(
+                strictness_level(config, "screen_id"),
+                f"'{screen_prefix}' is not a valid screen token for this show",
+                warnings,
+                failures,
+                flat_mode=flat_mode,
+            )
+        return
+
+    if isinstance(parsed, FullMatch):
+        screen_prefix = parsed.parsed.screen_prefix
+        if re.match(r"^SCR\d{2}$", screen_prefix) and find_screen(config, screen_prefix) is None:
+            _apply_validation_level(
+                strictness_level(config, "screen_id"),
+                f"Screen '{screen_prefix}' is not in config",
+                warnings,
+                failures,
+                flat_mode=flat_mode,
+            )
+
+
+def _filename_action(
+    failures: list[str],
+    warnings: list[str],
+    screen_routable: bool,
+) -> Action:
+    """Choose copy action for a partial filename match with routable screen."""
+    if failures or not screen_routable:
+        return Action.ROUTE_TO_REVIEW
+    if warnings:
+        return Action.COPY_WITH_WARNING
+    return Action.COPY
+
+
+def _screens_matching_resolution(
+    specs: MediaSpecs,
+    config: ShowConfig,
+) -> list[str]:
+    """Return screen ids whose configured resolution matches the probed file dimensions."""
+    if not specs.width or not specs.height:
+        return []
+    matches: list[str] = []
+    for screen in config.screens:
+        if not screen.resolution:
+            continue
+        try:
+            expected_w, expected_h = (int(x) for x in screen.resolution.split("x"))
+        except ValueError:
+            continue
+        if specs.width == expected_w and specs.height == expected_h:
+            matches.append(screen.id)
+    return matches
+
+
+def validate_file_specs_flat(
+    specs: MediaSpecs,
+    config: ShowConfig,
     warnings: list[str],
     failures: list[str],
 ) -> None:
-    """Fill warnings/failures lists based on spec comparison. Modifies lists in place."""
+    """Validate specs against the union of all configured screen profiles."""
     strictness = config.validation_strictness
-    expected   = config.expected_specs
-    prefix     = parsed.screen_prefix
 
     def _apply(level: str, message: str) -> None:
         if level == "ignore":
             return
         if level == "strict":
             failures.append(message)
-        else:  # warn or info
+        else:
             warnings.append(message)
 
-    # Resolution (skip for SCRwide-*, SCRall, AUD)
-    if re.match(r"^SCR\d{2}$", prefix):
-        screen_cfg = next((s for s in config.screens if s.id == prefix), None)
-        if screen_cfg and screen_cfg.resolution and specs.width and specs.height:
-            expected_w, expected_h = (int(x) for x in screen_cfg.resolution.split("x"))
-            if specs.width != expected_w or specs.height != expected_h:
-                _apply(
-                    strictness["resolution"],
-                    f"Resolution is {specs.width}x{specs.height}, expected {screen_cfg.resolution}",
-                )
-        elif screen_cfg is None:
-            _apply(strictness["screen_id"], f"Screen '{prefix}' is not in config")
-    elif prefix == "SCRall":
-        # Must match at least one configured screen
-        if specs.width and specs.height:
-            match = any(
-                s.resolution and int(s.resolution.split("x")[0]) == specs.width
-                and int(s.resolution.split("x")[1]) == specs.height
-                for s in config.screens
-                if s.resolution
-            )
-            if not match:
-                _apply(
-                    strictness["resolution"],
-                    f"Resolution {specs.width}x{specs.height} does not match any configured screen",
-                )
-    # SCRwide-* and AUD skip resolution
+    if not config.screens:
+        _apply(strictness["screen_id"], "No screens configured")
+        return
 
-    # Framerate
-    if specs.framerate is not None and expected.framerate is not None:
-        if abs(specs.framerate - expected.framerate) > 0.01:
+    if specs.width and specs.height:
+        if not _screens_matching_resolution(specs, config):
+            _apply(
+                strictness["resolution"],
+                f"Resolution {specs.width}x{specs.height} does not match any configured screen",
+            )
+
+    screen_specs = [
+        (screen, effective_specs_for_screen(screen, config))
+        for screen in config.screens
+    ]
+
+    if specs.framerate is not None:
+        valid_rates = [
+            eff.framerate for _, eff in screen_specs if eff.framerate is not None
+        ]
+        if valid_rates and not any(
+            abs(specs.framerate - rate) <= 0.01 for rate in valid_rates
+        ):
+            rates_label = ", ".join(f"{rate:g}" for rate in sorted(set(valid_rates)))
             _apply(
                 strictness["framerate"],
-                f"Framerate is {specs.framerate:.3f}, expected {expected.framerate}",
+                f"Framerate is {specs.framerate:.3f}; configured screens expect "
+                f"one of ({rates_label})",
             )
 
-    # Codec (two-tier)
+    if specs.color_space:
+        valid_spaces = [
+            eff.color_space for _, eff in screen_specs if eff.color_space is not None
+        ]
+        if valid_spaces and specs.color_space not in valid_spaces:
+            spaces_label = ", ".join(sorted(set(valid_spaces)))
+            _apply(
+                strictness["color_space"],
+                f"Color space is '{specs.color_space}'; configured screens allow "
+                f"one of ({spaces_label})",
+            )
+
+    if specs.color_range:
+        valid_ranges = [
+            eff.color_range for _, eff in screen_specs if eff.color_range is not None
+        ]
+        if valid_ranges and specs.color_range not in valid_ranges:
+            ranges_label = ", ".join(sorted(set(valid_ranges)))
+            _apply(
+                strictness["color_range"],
+                f"Color range is '{specs.color_range}'; configured screens allow "
+                f"one of ({ranges_label})",
+            )
+
+    if specs.audio_sample_rate is not None:
+        valid_rates = [
+            eff.audio_sample_rate
+            for _, eff in screen_specs
+            if eff.audio_sample_rate is not None
+        ]
+        if valid_rates and specs.audio_sample_rate not in valid_rates:
+            rates_label = ", ".join(str(rate) for rate in sorted(set(valid_rates)))
+            _apply(
+                strictness["audio_sample_rate"],
+                f"Audio sample rate is {specs.audio_sample_rate} Hz; configured screens "
+                f"expect one of ({rates_label}) Hz",
+            )
+
+    if specs.audio_channels is not None:
+        valid_channels = [
+            eff.audio_channels
+            for _, eff in screen_specs
+            if eff.audio_channels is not None
+        ]
+        if valid_channels and specs.audio_channels not in valid_channels:
+            channels_label = ", ".join(str(ch) for ch in sorted(set(valid_channels)))
+            _apply(
+                strictness["audio_channels"],
+                f"Audio channels: {specs.audio_channels}; configured screens expect "
+                f"one of ({channels_label})",
+            )
+
     if specs.codec_tag:
         identifier = codec_tag_to_identifier(specs.codec_tag)
         if identifier is None or identifier not in config.expected_codecs:
@@ -732,24 +1023,120 @@ def _validate_specs(
                 f"Codec '{identifier}' is acceptable but not preferred",
             )
     elif specs.codec_name:
-        # No known tag — use codec_name as fallback label
+        _apply(
+            strictness["codec"],
+            f"Unknown codec: {specs.codec_name} (no recognised ProRes tag)",
+        )
+
+
+def validate_file_specs(
+    specs: MediaSpecs,
+    config: ShowConfig,
+    warnings: list[str],
+    failures: list[str],
+    *,
+    parsed: ParsedFilename | None = None,
+    target_screen_id: str | None = None,
+) -> None:
+    """Fill warnings/failures based on spec comparison. Modifies lists in place."""
+    strictness = config.validation_strictness
+
+    def _apply(level: str, message: str) -> None:
+        if level == "ignore":
+            return
+        if level == "strict":
+            failures.append(message)
+        else:
+            warnings.append(message)
+
+    if target_screen_id is not None:
+        screen_cfg = find_screen(config, target_screen_id)
+        label = target_screen_id
+        if screen_cfg is None:
+            _apply(strictness["screen_id"], f"Screen '{target_screen_id}' is not in config")
+            expected = config.expected_specs
+        else:
+            expected = effective_specs_for_screen(screen_cfg, config)
+            if screen_cfg.resolution and specs.width and specs.height:
+                expected_w, expected_h = (int(x) for x in screen_cfg.resolution.split("x"))
+                if specs.width != expected_w or specs.height != expected_h:
+                    _apply(
+                        strictness["resolution"],
+                        f"Resolution is {specs.width}x{specs.height}, {label} expects {screen_cfg.resolution}",
+                    )
+    elif parsed is not None:
+        prefix = parsed.screen_prefix
+        if re.match(r"^SCR\d{2}$", prefix):
+            screen_cfg = find_screen(config, prefix)
+            if screen_cfg is None:
+                _apply(strictness["screen_id"], f"Screen '{prefix}' is not in config")
+                expected = config.expected_specs
+            else:
+                expected = effective_specs_for_screen(screen_cfg, config)
+                if screen_cfg.resolution and specs.width and specs.height:
+                    expected_w, expected_h = (int(x) for x in screen_cfg.resolution.split("x"))
+                    if specs.width != expected_w or specs.height != expected_h:
+                        _apply(
+                            strictness["resolution"],
+                            f"Resolution is {specs.width}x{specs.height}, expected {screen_cfg.resolution}",
+                        )
+        elif prefix == "SCRall":
+            expected = config.expected_specs
+            if specs.width and specs.height:
+                match = any(
+                    s.resolution and int(s.resolution.split("x")[0]) == specs.width
+                    and int(s.resolution.split("x")[1]) == specs.height
+                    for s in config.screens
+                    if s.resolution
+                )
+                if not match:
+                    _apply(
+                        strictness["resolution"],
+                        f"Resolution {specs.width}x{specs.height} does not match any configured screen",
+                    )
+        else:
+            expected = config.expected_specs
+    else:
+        expected = config.expected_specs
+
+    # Framerate
+    if specs.framerate is not None and expected.framerate is not None:
+        if abs(specs.framerate - expected.framerate) > 0.01:
+            label = target_screen_id or (parsed.screen_prefix if parsed else "show")
+            _apply(
+                strictness["framerate"],
+                f"Framerate is {specs.framerate:.3f}, {label} expects {expected.framerate}",
+            )
+
+    # Codec (show-level)
+    if specs.codec_tag:
+        identifier = codec_tag_to_identifier(specs.codec_tag)
+        if identifier is None or identifier not in config.expected_codecs:
+            codec_label = identifier or specs.codec_tag
+            _apply(
+                strictness["codec"],
+                f"Codec '{codec_label}' is not in expected_codecs",
+            )
+        elif identifier not in config.preferred_codecs:
+            _apply(
+                strictness["codec_flavor"],
+                f"Codec '{identifier}' is acceptable but not preferred",
+            )
+    elif specs.codec_name:
         _apply(strictness["codec"], f"Unknown codec: {specs.codec_name} (no recognised ProRes tag)")
 
-    # Color space
     if specs.color_space and expected.color_space is not None and specs.color_space != expected.color_space:
         _apply(
             strictness["color_space"],
             f"Color space is '{specs.color_space}', expected '{expected.color_space}'",
         )
 
-    # Color range
     if specs.color_range and expected.color_range is not None and specs.color_range != expected.color_range:
         _apply(
             strictness["color_range"],
             f"Color range is '{specs.color_range}', expected '{expected.color_range}'",
         )
 
-    # Audio sample rate
     if specs.audio_sample_rate is not None and expected.audio_sample_rate is not None \
             and specs.audio_sample_rate != expected.audio_sample_rate:
         _apply(
@@ -757,13 +1144,23 @@ def _validate_specs(
             f"Audio sample rate is {specs.audio_sample_rate} Hz, expected {expected.audio_sample_rate} Hz",
         )
 
-    # Audio channels
     if specs.audio_channels is not None and expected.audio_channels is not None \
             and specs.audio_channels != expected.audio_channels:
         _apply(
             strictness["audio_channels"],
             f"Audio channels: {specs.audio_channels}, expected {expected.audio_channels}",
         )
+
+
+def _validate_specs(
+    parsed: ParsedFilename,
+    specs: MediaSpecs,
+    config: ShowConfig,
+    warnings: list[str],
+    failures: list[str],
+) -> None:
+    """Backward-compatible wrapper for routed intake validation."""
+    validate_file_specs(specs, config, warnings, failures, parsed=parsed)
 
 
 def _print_file_plan_line(plan: FilePlan) -> None:

@@ -1,2 +1,0 @@
-python-docx>=1.0.0
-colorama>=0.4.6

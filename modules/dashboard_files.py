@@ -7,7 +7,7 @@ from pathlib import Path
 from modules.config import ShowConfig
 from modules.ffprobe_wrapper import codec_tag_to_identifier, probe_file
 from modules.filename_parser import FullMatch, parse_filename
-from modules.intake import _validate_specs
+from modules.intake import validate_file_specs, validate_filename
 
 
 def _codec_label(specs) -> str | None:
@@ -57,12 +57,23 @@ def list_screen_file_details(
 
         warnings: list[str] = []
         failures: list[str] = []
-        parsed_result = parse_filename(entry.name)
+        parsed_result = parse_filename(entry.name, config)
         specs = probe_file(entry)
 
-        if isinstance(parsed_result, FullMatch):
-            _validate_specs(parsed_result.parsed, specs, config, warnings, failures)
-        elif not specs.probe_succeeded:
+        validate_filename(parsed_result, config, warnings, failures)
+
+        parsed_for_validate = (
+            parsed_result.parsed if isinstance(parsed_result, FullMatch) else None
+        )
+        validate_file_specs(
+            specs,
+            config,
+            warnings,
+            failures,
+            parsed=parsed_for_validate,
+            target_screen_id=screen_id,
+        )
+        if not specs.probe_succeeded and not failures:
             failures.append(f"Could not read file metadata: {specs.probe_error}")
 
         try:

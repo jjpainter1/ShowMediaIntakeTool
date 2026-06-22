@@ -1,0 +1,48 @@
+Show Media Intake Tool v2 — Third-Party Notices
+================================================
+
+This application bundles or depends on the following third-party software.
+
+Python
+  License: PSF License
+  https://www.python.org/
+
+FFmpeg / ffprobe
+  License: LGPL/GPL (build-dependent); essentials build from gyan.dev
+  https://www.gyan.dev/ffmpeg/builds/
+  Source: see version.json ffmpeg_download_url in the install folder
+
+Tauri
+  License: MIT / Apache-2.0
+  https://tauri.app/
+
+FastAPI
+  License: MIT
+  https://fastapi.tiangolo.com/
+
+Uvicorn
+  License: BSD-3-Clause
+  https://www.uvicorn.org/
+
+python-docx
+  License: MIT
+  https://github.com/python-openxml/python-docx
+
+Pydantic
+  License: MIT
+  https://docs.pydantic.dev/
+
+colorama
+  License: BSD-3-Clause
+  https://github.com/tartley/colorama
+
+React
+  License: MIT
+  https://react.dev/
+
+Vite
+  License: MIT
+  https://vitejs.dev/
+
+Full Python dependency list: requirements.txt in the install folder.
+Full frontend dependency list: see frontend/package-lock.json in source releases.

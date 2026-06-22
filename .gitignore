@@ -35,5 +35,17 @@ Thumbs.db
 
 # Local app state / shortcuts / archives
 .recent_shows.json
+.setup-complete
+python-home.txt
+python-packages/
+backend.log
+.venv/
 *.lnk
 *.zip
+
+# Release build output
+dist/
+
+# Bundled FFmpeg binaries (downloaded by build-release.ps1)
+tools/ffmpeg/bin/*.exe
+tools/ffmpeg/bin/*.dll

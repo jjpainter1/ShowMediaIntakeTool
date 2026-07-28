@@ -148,6 +148,10 @@ if (-not (Test-Path (Join-Path $ffmpegBinDest "ffprobe.exe"))) {
 }
 Write-Host "OK  ffprobe staged"
 
+# Drop bytecode caches — not needed in distribution and can lock under Dropbox/antivirus.
+Get-ChildItem -Path $StageDir -Recurse -Directory -Filter "__pycache__" -ErrorAction SilentlyContinue |
+    ForEach-Object { Remove-Item $_.FullName -Recurse -Force -ErrorAction SilentlyContinue }
+
 # --- Zip ---
 New-Item -ItemType Directory -Path $DistRoot -Force | Out-Null
 $zipPath = Join-Path $DistRoot "$ReleaseName.zip"

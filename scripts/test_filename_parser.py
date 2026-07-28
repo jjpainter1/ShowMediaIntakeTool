@@ -14,8 +14,8 @@ from modules.config import _build_show_config, validate_config
 from modules.filename_parser import FullMatch, NoMatch, PartialMatch, parse_filename
 
 
-def _config_with_convention() -> object:
-    data = {
+def _config_data(tokens: list[str], intake_mode: str = "routed") -> dict:
+    return {
         "schema_version": 2,
         "preset": "pixera",
         "show_name": "Maurice",
@@ -47,12 +47,12 @@ def _config_with_convention() -> object:
             "filename_format": "warn",
             "show_token": "warn",
         },
-        "intake": {"mode": "routed"},
+        "intake": {"mode": intake_mode},
         "output_specs": {"mode": "uniform"},
         "delivery": {"show_token": "Sky"},
         "filename_convention": {
             "enabled": True,
-            "tokens": ["show_token", "screen", "content", "version", "date"],
+            "tokens": tokens,
             "version_prefix": "v",
             "date_format": "YYYYMMDD",
             "allow_loop_suffix": True,
@@ -60,6 +60,16 @@ def _config_with_convention() -> object:
             "formats": {"version": {"prefix": "v", "digits": 2}},
         },
     }
+
+
+def _config_with_convention() -> object:
+    data = _config_data(["show_token", "screen", "content", "version", "date"])
+    validate_config(data)
+    return _build_show_config(data)
+
+
+def _config_from_tokens(tokens: list[str], intake_mode: str = "routed") -> object:
+    data = _config_data(tokens, intake_mode=intake_mode)
     validate_config(data)
     return _build_show_config(data)
 
@@ -99,12 +109,41 @@ def test_no_screen_is_no_match() -> None:
     print("PASS  no screen token -> no match")
 
 
+def test_config_accepts_partial_token_set() -> None:
+    validate_config(_config_data(["screen", "content"], intake_mode="routed"))
+    validate_config(_config_data(["content", "version"], intake_mode="flat"))
+    print("PASS  config save accepts custom token subsets")
+
+
+def test_screen_and_content_only_full_match() -> None:
+    config = _config_from_tokens(["screen", "content"])
+    result = parse_filename("SCR01_OpeningVideo.mov", config)
+    assert isinstance(result, FullMatch), (type(result), getattr(result, "problems", None))
+    assert result.parsed.screen_prefix == "SCR01"
+    assert result.parsed.slug == "OpeningVideo"
+    assert result.parsed.version == 0
+    print("PASS  screen+content convention -> full match without version/date")
+
+
+def test_flat_content_version_without_screen() -> None:
+    config = _config_from_tokens(["content", "version"], intake_mode="flat")
+    result = parse_filename("OpeningVideo_v01.mov", config)
+    assert isinstance(result, FullMatch), (type(result), getattr(result, "problems", None))
+    assert result.parsed.slug == "OpeningVideo"
+    assert result.parsed.version == 1
+    assert result.parsed.screen_prefix == ""
+    print("PASS  flat content+version without screen -> full match")
+
+
 def main() -> int:
     tests = [
         test_screen_first_without_show_token,
         test_canonical_order_full_match,
         test_reordered_tokens_full_match,
         test_no_screen_is_no_match,
+        test_config_accepts_partial_token_set,
+        test_screen_and_content_only_full_match,
+        test_flat_content_version_without_screen,
     ]
     failures = 0
     for test in tests:

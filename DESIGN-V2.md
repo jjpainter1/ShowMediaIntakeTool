@@ -1308,6 +1308,8 @@ These features are explicitly deferred to v2.1+:
 - **Multi-operator support per installation**
 - **Run-of-show map automation**
 - **Sample test data generator**
+- **Custom filename convention with optional tokens** — custom patterns must not require all default tokens; see `PROGRESS.md` § Planned updates (2026-07-27)
+- **Still images and image sequences** (`.jpg`, `.png`, `.tga`, `.tiff`, `.exr`, etc.) — config, ffprobe probing, and type-aware validation; see `PROGRESS.md` § Planned updates (2026-07-27)
 
 ---
 
@@ -1338,6 +1340,11 @@ For reference; not for v2.0 implementation:
 - Verified PlayBack Pro and Mitti preset contents
 - Preset-aware spec docx templates
 - Drag-and-drop folder selection
+
+**v2.2 priorities** (field testing feedback, 2026-07-27):
+- **Truly custom filename convention** — allow any subset of tokens when Custom is enabled; only routed intake requires `screen` (implementation notes in `PROGRESS.md`)
+- **Still images and image sequences** — common show delivery formats; config + ffprobe + validation split by media type (implementation notes in `PROGRESS.md`)
+- **Hide launcher terminal window** — desktop shortcut should not show a persistent PowerShell console; hidden launcher + error dialogs (implementation notes in `PROGRESS.md`)
 
 **v2.2+ wishlist:**
 - PDF spec output

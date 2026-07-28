@@ -56,5 +56,10 @@
   "delivery": {},
   "filename_convention": {
     "enabled": false
+  },
+  "expected_media": {
+    "accept_stills": true,
+    "image_extensions": [".jpg", ".jpeg", ".png", ".tga", ".tif", ".tiff", ".exr"],
+    "allow_image_sequences": true
   }
 }

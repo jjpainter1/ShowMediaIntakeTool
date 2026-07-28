@@ -20,6 +20,7 @@ from modules.config import ConfigInvalidError, ConfigNotFoundError, load_config
 from modules.intake import (
     append_to_delivery_log,
     build_intake_plan,
+    CopyProgressEvent,
     execute_plan,
     write_intake_log,
 )
@@ -106,16 +107,20 @@ def _run_execute(
     stale = [stale_folder_from_dict(item) for item in stale_dicts]
     conflicts_count = sum(1 for p in plans if p.version_conflict)
 
-    def on_progress(current: int, total: int, filename: str, status: str) -> None:
+    def on_progress(event: CopyProgressEvent) -> None:
         if loop is not None and progress_queue is not None:
             loop.call_soon_threadsafe(
                 progress_queue.put_nowait,
                 {
                     "type": "progress",
-                    "current": current,
-                    "total": total,
-                    "filename": filename,
-                    "status": status,
+                    "current": event.files_done,
+                    "total": event.files_total,
+                    "filename": event.filename,
+                    "status": event.status,
+                    "bytes_copied": event.bytes_copied,
+                    "bytes_total": event.bytes_total,
+                    "job_bytes_copied": event.job_bytes_copied,
+                    "job_bytes_total": event.job_bytes_total,
                 },
             )
 

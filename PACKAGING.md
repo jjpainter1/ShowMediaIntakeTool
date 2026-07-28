@@ -449,6 +449,8 @@ Exit `0`.
 
 Wire the same lifecycle inside Tauri (spawn sidecar) so Launch.ps1 is only a thin fallback. v1 ships with PowerShell orchestration.
 
+**Near-term alternative (planned — see `PROGRESS.md` § Planned updates §3):** Keep Launch.ps1 orchestration but run it with `-WindowStyle Hidden` and show Win32 message boxes on errors. Backend and Tauri exe are already headless; only the launcher console needs hiding.
+
 ---
 
 ## File 3: `README-INSTALL.txt`

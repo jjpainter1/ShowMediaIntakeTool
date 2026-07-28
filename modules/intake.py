@@ -2,6 +2,7 @@
 
 import re
 import shutil
+import time
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum, auto
@@ -39,6 +40,13 @@ from modules.filename_parser import (
     parse_filename,
 )
 from modules.ffprobe_wrapper import MediaSpecs, codec_tag_to_identifier, probe_file
+from modules.media_formats import (
+    is_recognized_still_extension,
+    is_still_media_kind,
+    normalize_extension,
+    partition_image_sequences,
+    strip_sequence_frame_suffix,
+)
 from modules.setup import StaleFolder, detect_stale_folders, ensure_media_structure
 
 from colorama import Fore, Style
@@ -78,7 +86,10 @@ class FilePlan:
     action:           Action
     warnings:         list[str] = field(default_factory=list)
     failures:         list[str] = field(default_factory=list)
+    infos:            list[str] = field(default_factory=list)
     version_conflict: ConflictInfo | None = None
+    sequence_paths:   list[Path] = field(default_factory=list)
+    media_kind:       str = "video"
 
 
 @dataclass
@@ -103,22 +114,153 @@ def walk_source(source: Path) -> list[Path]:
     return sorted(files)
 
 
+def _source_paths_for_plan(plan: FilePlan) -> list[Path]:
+    if plan.sequence_paths:
+        return list(plan.sequence_paths)
+    return [plan.source_path]
+
+
+def _path_size(path: Path) -> int:
+    try:
+        return path.stat().st_size
+    except OSError:
+        return 0
+
+
+def _plan_total_bytes(plan: FilePlan) -> int:
+    return sum(_path_size(path) for path in _source_paths_for_plan(plan))
+
+
+def _validate_delivery_extension(
+    source_path: Path,
+    config: ShowConfig,
+    warnings: list[str],
+    failures: list[str],
+    *,
+    flat_mode: bool = False,
+) -> None:
+    ext = source_path.suffix
+    if config.expected_media.is_allowed_extension(ext):
+        return
+    normalized = normalize_extension(ext)
+    if is_recognized_still_extension(normalized) and not config.expected_media.accept_stills:
+        message = (
+            "Still images are not enabled — turn on "
+            "'Accept still images' in Expected Specs"
+        )
+    elif is_recognized_still_extension(normalized):
+        message = (
+            f"Still image extension '{ext}' is not in the accepted formats list "
+            f"(Expected Specs → Still images)"
+        )
+    elif config.expected_media.is_video_extension(ext):
+        message = f"Video extension '{ext}' is not in the accepted delivery formats"
+    else:
+        message = f"Extension '{ext}' is not an accepted delivery format"
+    _apply_validation_level(
+        strictness_level(config, "codec"),
+        message,
+        warnings,
+        failures,
+        flat_mode=flat_mode,
+    )
+
+
+def _validate_still_image_specs(
+    specs: MediaSpecs,
+    config: ShowConfig,
+    warnings: list[str],
+    failures: list[str],
+    *,
+    parsed: ParsedFilename | None = None,
+    target_screen_id: str | None = None,
+    flat_mode: bool = False,
+) -> None:
+    """Validate resolution only for still images and image sequences."""
+    strictness = config.validation_strictness
+
+    def _apply(level: str, message: str) -> None:
+        if level == "ignore":
+            return
+        if flat_mode:
+            if level in ("strict", "warn", "info"):
+                warnings.append(message)
+            return
+        if level == "strict":
+            failures.append(message)
+        else:
+            warnings.append(message)
+
+    if target_screen_id is not None:
+        screen_cfg = find_screen(config, target_screen_id)
+        if screen_cfg is None:
+            _apply(strictness["screen_id"], f"Screen '{target_screen_id}' is not in config")
+        elif screen_cfg.resolution and specs.width and specs.height:
+            expected_w, expected_h = (int(x) for x in screen_cfg.resolution.split("x"))
+            if specs.width != expected_w or specs.height != expected_h:
+                _apply(
+                    strictness["resolution"],
+                    f"Resolution is {specs.width}x{specs.height}, "
+                    f"{target_screen_id} expects {screen_cfg.resolution}",
+                )
+    elif parsed is not None and parsed.screen_prefix:
+        prefix = parsed.screen_prefix
+        if re.match(r"^SCR\d{2}$", prefix):
+            screen_cfg = find_screen(config, prefix)
+            if screen_cfg is None:
+                _apply(strictness["screen_id"], f"Screen '{prefix}' is not in config")
+            elif screen_cfg.resolution and specs.width and specs.height:
+                expected_w, expected_h = (int(x) for x in screen_cfg.resolution.split("x"))
+                if specs.width != expected_w or specs.height != expected_h:
+                    _apply(
+                        strictness["resolution"],
+                        f"Resolution is {specs.width}x{specs.height}, expected {screen_cfg.resolution}",
+                    )
+        elif prefix == "SCRall" and specs.width and specs.height:
+            match = any(
+                s.resolution
+                and int(s.resolution.split("x")[0]) == specs.width
+                and int(s.resolution.split("x")[1]) == specs.height
+                for s in config.screens
+                if s.resolution
+            )
+            if not match:
+                _apply(
+                    strictness["resolution"],
+                    f"Resolution {specs.width}x{specs.height} does not match any configured screen",
+                )
+    elif flat_mode and specs.width and specs.height:
+        if not _screens_matching_resolution(specs, config):
+            _apply(
+                strictness["resolution"],
+                f"Resolution {specs.width}x{specs.height} does not match any configured screen",
+            )
+
+
 # ---------------------------------------------------------------------------
 # 7B: Per-file planning
 # ---------------------------------------------------------------------------
 
-def plan_file(source_path: Path, config: ShowConfig, show_root: Path) -> FilePlan:
+def plan_file(
+    source_path: Path,
+    config: ShowConfig,
+    show_root: Path,
+    *,
+    parse_filename_as: str | None = None,
+) -> FilePlan:
     """Determine the action and destination for a single source file."""
     filename = source_path.name
-    parsed = parse_filename(filename, config)
+    parse_name = parse_filename_as or filename
+    parsed = parse_filename(parse_name, config)
     review_path = show_root / "Media" / "_REVIEW" / filename
     warnings: list[str] = []
     failures: list[str] = []
 
+    _validate_delivery_extension(source_path, config, warnings, failures)
     validate_filename(parsed, config, warnings, failures)
 
     if isinstance(parsed, NoMatch):
-        specs = probe_file(source_path)
+        specs = probe_file(source_path, config)
         if specs.probe_succeeded:
             validate_file_specs(specs, config, warnings, failures)
         else:
@@ -150,7 +292,7 @@ def plan_file(source_path: Path, config: ShowConfig, show_root: Path) -> FilePla
     target_screen = screen_prefix if screen_cfg else None
 
     if isinstance(parsed, PartialMatch):
-        specs = probe_file(source_path)
+        specs = probe_file(source_path, config)
         if not specs.probe_succeeded:
             failures.append(f"Could not read file metadata: {specs.probe_error}")
             return FilePlan(
@@ -185,7 +327,7 @@ def plan_file(source_path: Path, config: ShowConfig, show_root: Path) -> FilePla
         )
         return _apply_existing_file_check(plan, source_path, show_root)
 
-    specs = probe_file(source_path)
+    specs = probe_file(source_path, config)
     if not specs.probe_succeeded:
         return FilePlan(
             source_path=source_path,
@@ -231,10 +373,13 @@ def plan_file_flat(
     source_path: Path,
     config: ShowConfig,
     show_root: Path,
+    *,
+    parse_filename_as: str | None = None,
 ) -> FilePlan:
     """Plan a file for flat intake: union spec validation; copy to Media/_INCOMING."""
     filename = source_path.name
-    parsed = parse_filename(filename, config)
+    parse_name = parse_filename_as or filename
+    parsed = parse_filename(parse_name, config)
     incoming_folder = _flat_dest_folder(show_root)
     dest_path = incoming_folder / filename
     review_path = show_root / "Media" / "_REVIEW" / filename
@@ -252,9 +397,12 @@ def plan_file_flat(
             failures=["Flat intake requires at least one screen in config"],
         )
 
+    _validate_delivery_extension(
+        source_path, config, warnings, failures, flat_mode=True,
+    )
     validate_filename(parsed, config, warnings, failures, flat_mode=True)
 
-    specs = probe_file(source_path)
+    specs = probe_file(source_path, config)
     if not specs.probe_succeeded:
         failures.append(f"Could not read file metadata: {specs.probe_error}")
         return FilePlan(
@@ -290,6 +438,38 @@ def plan_file_flat(
     return _apply_existing_file_check(plan, source_path, show_root)
 
 
+def plan_image_sequence(
+    sequence_paths: list[Path],
+    config: ShowConfig,
+    show_root: Path,
+    *,
+    flat: bool,
+) -> FilePlan:
+    """Plan a numbered image sequence as one logical asset (validate once, copy all frames)."""
+    representative = sequence_paths[0]
+    logical_name = strip_sequence_frame_suffix(representative.name)
+    if flat:
+        plan = plan_file_flat(
+            representative,
+            config,
+            show_root,
+            parse_filename_as=logical_name,
+        )
+    else:
+        plan = plan_file(
+            representative,
+            config,
+            show_root,
+            parse_filename_as=logical_name,
+        )
+    plan.sequence_paths = list(sequence_paths)
+    plan.media_kind = "image_sequence"
+    if plan.specs is not None:
+        plan.specs.media_kind = "image_sequence"
+    plan.infos.insert(0, f"Image sequence: {len(sequence_paths)} frames")
+    return plan
+
+
 ProgressCallback = Callable[[int, int, str], None]
 
 
@@ -309,16 +489,25 @@ def build_intake_plan(
 
     ensure_media_structure(show_root, config)
     files = walk_source(source)
-    total = len(files)
+    sequences, singletons = partition_image_sequences(files, config)
+    flat = is_flat_intake(config)
     plans: list[FilePlan] = []
-    for index, file_path in enumerate(files, start=1):
-        if is_flat_intake(config):
+    logical_total = len(sequences) + len(singletons)
+    index = 0
+    for sequence_paths in sequences:
+        index += 1
+        plans.append(plan_image_sequence(sequence_paths, config, show_root, flat=flat))
+        if progress is not None:
+            progress(index, logical_total, sequence_paths[0].name)
+    for file_path in singletons:
+        index += 1
+        if flat:
             plans.append(plan_file_flat(file_path, config, show_root))
         else:
             plans.append(plan_file(file_path, config, show_root))
         if progress is not None:
-            progress(index, total, file_path.name)
-    if not is_flat_intake(config):
+            progress(index, logical_total, file_path.name)
+    if not flat:
         plans = detect_version_conflicts(plans, show_root, config)
     stale = detect_stale_folders(show_root, config)
     return plans, stale
@@ -330,6 +519,9 @@ def detect_version_conflicts(
     config: ShowConfig,
 ) -> list[FilePlan]:
     """Populate version_conflict on plans where an older version already exists."""
+    if config.filename_convention.enabled and "version" not in config.filename_convention.tokens:
+        return plans
+
     for plan in plans:
         if plan.action not in (Action.COPY, Action.COPY_WITH_WARNING):
             continue
@@ -440,15 +632,52 @@ def prompt_proceed() -> bool:
 # 7D: Execution
 # ---------------------------------------------------------------------------
 
-def atomic_copy(source: Path, destination: Path) -> bool:
+CopyByteProgressCallback = Callable[[int, int], None]
+
+_COPY_PROGRESS_INTERVAL_SEC = 0.12
+_COPY_CHUNK_SIZE = 8 * 1024 * 1024
+
+
+def atomic_copy(
+    source: Path,
+    destination: Path,
+    *,
+    progress: CopyByteProgressCallback | None = None,
+) -> bool:
     """Copy source → destination atomically via a .tmp intermediate.
 
+    progress(bytes_copied, bytes_total) is called during the transfer (throttled).
     Returns True on success, False on failure (temp file cleaned up on failure).
     """
     tmp_path = destination.parent / (destination.name + ".tmp")
     try:
         destination.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(source, tmp_path)
+        total_bytes = _path_size(source)
+        copied_bytes = 0
+        last_report = 0.0
+
+        def _report(force: bool = False) -> None:
+            if progress is None:
+                return
+            nonlocal last_report
+            now = time.monotonic()
+            if not force and copied_bytes < total_bytes:
+                if now - last_report < _COPY_PROGRESS_INTERVAL_SEC:
+                    return
+            last_report = now
+            progress(copied_bytes, total_bytes)
+
+        with source.open("rb") as src_file, tmp_path.open("wb") as dst_file:
+            while True:
+                chunk = src_file.read(_COPY_CHUNK_SIZE)
+                if not chunk:
+                    break
+                dst_file.write(chunk)
+                copied_bytes += len(chunk)
+                _report()
+
+        _report(force=True)
+        shutil.copystat(source, tmp_path)
         tmp_path.replace(destination)
         return True
     except Exception as exc:
@@ -460,7 +689,19 @@ def atomic_copy(source: Path, destination: Path) -> bool:
         return False
 
 
-ExecuteProgressCallback = Callable[[int, int, str, str], None]
+@dataclass
+class CopyProgressEvent:
+    files_done: int
+    files_total: int
+    filename: str
+    status: str  # copying | done | failed | skipped
+    bytes_copied: int = 0
+    bytes_total: int = 0
+    job_bytes_copied: int = 0
+    job_bytes_total: int = 0
+
+
+ExecuteProgressCallback = Callable[[CopyProgressEvent], None]
 
 
 def execute_plan(
@@ -472,7 +713,8 @@ def execute_plan(
     """Execute the file plan: copy, skip, or route to review. Returns a summary.
 
     progress(current, total, filename, status) is called after each actionable file,
-    where status is ``done``, ``failed``, or ``skipped``.
+    where status is ``done``, ``failed``, or ``skipped``. During each file copy,
+    status ``copying`` events include byte counts for the file and overall job.
     """
     result = ExecutionResult()
 
@@ -486,37 +728,103 @@ def execute_plan(
                 pass
 
     actionable = [p for p in plans if p.action != Action.SKIP_IDENTICAL]
-    total = len(actionable)
-    actionable_index = 0
+    file_total = sum(len(_source_paths_for_plan(p)) for p in actionable)
+    job_bytes_total = sum(
+        _path_size(path)
+        for plan in actionable
+        for path in _source_paths_for_plan(plan)
+    )
+    files_done = 0
+    job_bytes_copied = 0
+
+    def _emit(event: CopyProgressEvent) -> None:
+        if progress is not None:
+            progress(event)
 
     for plan in plans:
-        filename = plan.source_path.name
-        size_str = format_filesize(plan.source_path.stat().st_size)
-
         if plan.action == Action.SKIP_IDENTICAL:
-            result.skipped.append(plan.destination_path)
-            if progress is not None:
-                progress(0, total, filename, "skipped")
+            for src in _source_paths_for_plan(plan):
+                result.skipped.append(plan.destination_path.parent / src.name)
+            _emit(
+                CopyProgressEvent(
+                    files_done=files_done,
+                    files_total=file_total,
+                    filename=plan.source_path.name,
+                    status="skipped",
+                    job_bytes_copied=job_bytes_copied,
+                    job_bytes_total=job_bytes_total,
+                )
+            )
             continue
 
-        actionable_index += 1
-        n_of_m = f"{actionable_index}/{total}" if total else "?"
-        print(f"  Copying {n_of_m}: {filename} ({size_str})...", end=" ", flush=True)
+        sources = _source_paths_for_plan(plan)
+        label = plan.source_path.name
+        if len(sources) > 1:
+            label = f"{label} ({len(sources)} frames)"
+        size_str = format_filesize(_plan_total_bytes(plan))
+        print(f"  Copying {label} ({size_str})...", end=" ", flush=True)
 
-        success = atomic_copy(plan.source_path, plan.destination_path)
-        if success:
+        copy_ok = True
+        for src in sources:
+            file_bytes = _path_size(src)
+
+            def _on_bytes(copied: int, total: int) -> None:
+                _emit(
+                    CopyProgressEvent(
+                        files_done=files_done,
+                        files_total=file_total,
+                        filename=src.name,
+                        status="copying",
+                        bytes_copied=copied,
+                        bytes_total=total,
+                        job_bytes_copied=job_bytes_copied + copied,
+                        job_bytes_total=job_bytes_total,
+                    )
+                )
+
+            dest = plan.destination_path.parent / src.name
+            if not atomic_copy(src, dest, progress=_on_bytes):
+                copy_ok = False
+                result.copy_failures.append((src, "copy error"))
+                _emit(
+                    CopyProgressEvent(
+                        files_done=files_done,
+                        files_total=file_total,
+                        filename=src.name,
+                        status="failed",
+                        bytes_copied=0,
+                        bytes_total=file_bytes,
+                        job_bytes_copied=job_bytes_copied,
+                        job_bytes_total=job_bytes_total,
+                    )
+                )
+                break
+
+            files_done += 1
+            job_bytes_copied += file_bytes
+            _emit(
+                CopyProgressEvent(
+                    files_done=files_done,
+                    files_total=file_total,
+                    filename=src.name,
+                    status="done",
+                    bytes_copied=file_bytes,
+                    bytes_total=file_bytes,
+                    job_bytes_copied=job_bytes_copied,
+                    job_bytes_total=job_bytes_total,
+                )
+            )
+
+        if copy_ok:
             print(f"{Fore.GREEN}done{Style.RESET_ALL}")
-            if plan.action == Action.ROUTE_TO_REVIEW:
-                result.routed_to_review.append(plan.destination_path)
-            else:
-                result.copied.append(plan.destination_path)
-            if progress is not None:
-                progress(actionable_index, total, filename, "done")
+            for src in sources:
+                dest = plan.destination_path.parent / src.name
+                if plan.action == Action.ROUTE_TO_REVIEW:
+                    result.routed_to_review.append(dest)
+                else:
+                    result.copied.append(dest)
         else:
             print(f"{Fore.RED}FAILED{Style.RESET_ALL}")
-            result.copy_failures.append((plan.source_path, "copy error"))
-            if progress is not None:
-                progress(actionable_index, total, filename, "failed")
 
     return result
 
@@ -599,9 +907,11 @@ def write_intake_log(
             Action.ROUTE_TO_REVIEW:   "REVIEW",
             Action.SKIP_IDENTICAL:    "SKIP",
         }[plan.action]
-        size_str = format_filesize(plan.source_path.stat().st_size)
+        size_str = format_filesize(_plan_total_bytes(plan))
         rel_dest = plan.destination_path.relative_to(show_root / "Media")
         lines.append(f"  [{action_label:16s}] {plan.source_path.name:50s} ({size_str:>8s})  ->  Media\\{rel_dest.parent.name}\\")
+        for info in plan.infos:
+            lines.append(f"                       INFO: {info}")
         for w in plan.warnings:
             lines.append(f"                       WARN: {w}")
         for f_ in plan.failures:
@@ -741,6 +1051,9 @@ def _unique_review_path(dest: Path) -> Path:
 
 def _apply_existing_file_check(plan: FilePlan, source_path: Path, show_root: Path) -> FilePlan:
     """Prevent overwrites: skip identical screen-folder files; rename _REVIEW duplicates."""
+    if plan.specs and not plan.sequence_paths:
+        plan.media_kind = plan.specs.media_kind
+
     dest = plan.destination_path
     review_dir = show_root / "Media" / "_REVIEW"
 
@@ -917,6 +1230,12 @@ def validate_file_specs_flat(
     failures: list[str],
 ) -> None:
     """Validate specs against the union of all configured screen profiles."""
+    if is_still_media_kind(specs.media_kind):
+        _validate_still_image_specs(
+            specs, config, warnings, failures, flat_mode=True,
+        )
+        return
+
     strictness = config.validation_strictness
 
     def _apply(level: str, message: str) -> None:
@@ -1039,6 +1358,17 @@ def validate_file_specs(
     target_screen_id: str | None = None,
 ) -> None:
     """Fill warnings/failures based on spec comparison. Modifies lists in place."""
+    if is_still_media_kind(specs.media_kind):
+        _validate_still_image_specs(
+            specs,
+            config,
+            warnings,
+            failures,
+            parsed=parsed,
+            target_screen_id=target_screen_id,
+        )
+        return
+
     strictness = config.validation_strictness
 
     def _apply(level: str, message: str) -> None:
@@ -1186,6 +1516,8 @@ def _print_file_plan_line(plan: FilePlan) -> None:
     print(f"{prefix}{filename:50s} ({size_str:>8s})  {dest_label}")
 
     indent = "               "
+    for info in plan.infos:
+        print(f"{Fore.CYAN}{indent}INFO: {info}{Style.RESET_ALL}")
     for w in plan.warnings:
         print(f"{Fore.YELLOW}{indent}WARN: {w}{Style.RESET_ALL}")
     for f_ in plan.failures:

@@ -81,6 +81,6 @@ LICENSE AND THIRD-PARTY SOFTWARE
 
 SUPPORT
   https://github.com/prestigeav/ShowMediaIntakeTool
-  Version: 2.1.1
+  Version: 2.2.0
 
 ================================================================================

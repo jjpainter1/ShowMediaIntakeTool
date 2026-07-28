@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from modules.filename_parser import ALLOWED_TOKENS, DEFAULT_TOKENS, ROUTING_TOKEN
+from modules.media_formats import ExpectedMediaConfig, normalize_extension, parse_expected_media
 
 # Only letters, digits, hyphens, underscores — no spaces or special characters.
 FILENAME_SAFE = re.compile(r"^[A-Za-z0-9_-]+$")
@@ -138,6 +139,7 @@ class ShowConfig:
     output_specs: OutputSpecsConfig
     delivery: DeliveryConfig
     filename_convention: FilenameConventionConfig
+    expected_media: ExpectedMediaConfig = field(default_factory=ExpectedMediaConfig)
 
 
 # ---------------------------------------------------------------------------
@@ -298,6 +300,47 @@ def _parse_filename_convention(data: object) -> FilenameConventionConfig:
     )
 
 
+def _validate_expected_media(data: dict) -> None:
+    if "expected_media" not in data:
+        return
+    block = data["expected_media"]
+    if not isinstance(block, dict):
+        raise ConfigInvalidError("Field 'expected_media' must be an object")
+    accept_stills = bool(block.get("accept_stills", False))
+    raw_images = block.get("image_extensions")
+    if raw_images is not None:
+        if not isinstance(raw_images, list) or not raw_images:
+            raise ConfigInvalidError(
+                "Field 'expected_media.image_extensions' must be a non-empty array when set"
+            )
+        seen: set[str] = set()
+        for ext in raw_images:
+            normalized = normalize_extension(str(ext))
+            if not normalized or len(normalized) < 2:
+                raise ConfigInvalidError(
+                    f"Invalid image extension: '{ext}' (use format like .png)"
+                )
+            if normalized in seen:
+                raise ConfigInvalidError(
+                    f"Duplicate image extension in expected_media.image_extensions: '{ext}'"
+                )
+            seen.add(normalized)
+    if accept_stills and raw_images is None:
+        pass  # defaults applied at parse
+    raw_videos = block.get("video_extensions")
+    if raw_videos is not None:
+        if not isinstance(raw_videos, list) or not raw_videos:
+            raise ConfigInvalidError(
+                "Field 'expected_media.video_extensions' must be a non-empty array when set"
+            )
+        for ext in raw_videos:
+            normalized = normalize_extension(str(ext))
+            if not normalized or len(normalized) < 2:
+                raise ConfigInvalidError(
+                    f"Invalid video extension: '{ext}' (use format like .mov)"
+                )
+
+
 def _validate_filename_convention(data: dict) -> None:
     """Validate filename_convention and delivery.show_token when present."""
     if "delivery" in data:
@@ -349,13 +392,6 @@ def _validate_filename_convention(data: dict) -> None:
         raise ConfigInvalidError(
             f"Unknown filename tokens: {sorted(unknown)}. "
             f"Allowed: {', '.join(sorted(ALLOWED_TOKENS))}"
-        )
-
-    required = {"screen", "content", "version", "date"}
-    missing = required - set(tokens)
-    if missing:
-        raise ConfigInvalidError(
-            f"filename_convention.tokens must include: {', '.join(sorted(required))}"
         )
 
     intake_mode = "routed"
@@ -544,6 +580,7 @@ def validate_config(data: dict, *, for_save: bool = True) -> None:
                 f"'validation_strictness.{field}' must be one of: strict, warn, info, ignore; got: '{strictness[field]}'"
             )
 
+    _validate_expected_media(data)
     _validate_filename_convention(data)
 
 
@@ -632,6 +669,7 @@ def _build_show_config(data: dict) -> ShowConfig:
         output_specs=OutputSpecsConfig(mode=output_mode),
         delivery=_parse_delivery(data.get("delivery")),
         filename_convention=_parse_filename_convention(data.get("filename_convention")),
+        expected_media=parse_expected_media(data.get("expected_media")),
     )
 
 

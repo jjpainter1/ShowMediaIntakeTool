@@ -52,6 +52,8 @@ export type ScreenFileDetail = {
     height: number | null
     framerate: number | null
     codec: string | null
+    media_kind?: string
+    frame_count?: number | null
     probe_succeeded: boolean
   }
   spec_status: {
@@ -61,6 +63,7 @@ export type ScreenFileDetail = {
   }
   warnings: string[]
   failures: string[]
+  infos?: string[]
 }
 
 export type ScreenSnapshot = {
@@ -258,6 +261,7 @@ export type IntakeFilePlan = {
     height: number | null
     framerate: number | null
     codec: string | null
+    media_kind?: string
     probe_succeeded: boolean
     probe_error: string | null
   } | null
@@ -267,11 +271,15 @@ export type IntakeFilePlan = {
     fps: SpecStatus
   }
   size_bytes: number
+  frame_count?: number
+  media_kind?: string
   destination_path: string
   destination_label: string
   action: IntakeAction
   warnings: string[]
   failures: string[]
+  infos?: string[]
+  sequence_paths?: string[]
   version_conflict: {
     existing_versions: ParsedFile[]
     incoming_version: number
@@ -311,7 +319,22 @@ export type IntakeScanProgress = {
 }
 
 export type IntakeCopyProgress = IntakeScanProgress & {
-  status: 'done' | 'failed' | 'skipped'
+  status: 'copying' | 'done' | 'failed' | 'skipped'
+  bytes_copied?: number
+  bytes_total?: number
+  job_bytes_copied?: number
+  job_bytes_total?: number
+}
+
+export function copyProgressPercent(progress: IntakeCopyProgress): number {
+  if (progress.job_bytes_total && progress.job_bytes_total > 0) {
+    const copied = progress.job_bytes_copied ?? 0
+    return Math.min(100, Math.round((copied / progress.job_bytes_total) * 100))
+  }
+  if (progress.total > 0) {
+    return Math.min(100, Math.round((progress.current / progress.total) * 100))
+  }
+  return 0
 }
 
 function wsOrigin(): string {
@@ -478,6 +501,10 @@ export async function executeIntake(
             total: Number(data.total ?? 0),
             filename: String(data.filename ?? ''),
             status: (data.status as IntakeCopyProgress['status']) ?? 'done',
+            bytes_copied: Number(data.bytes_copied ?? 0),
+            bytes_total: Number(data.bytes_total ?? 0),
+            job_bytes_copied: Number(data.job_bytes_copied ?? 0),
+            job_bytes_total: Number(data.job_bytes_total ?? 0),
           })
         }
       },
@@ -571,6 +598,12 @@ export type ShowConfigData = {
       date?: string
       content?: { allow_loop_suffix?: boolean }
     }
+  }
+  expected_media?: {
+    accept_stills: boolean
+    image_extensions: string[]
+    allow_image_sequences: boolean
+    video_extensions?: string[]
   }
 }
 

@@ -7,6 +7,7 @@ from pathlib import Path
 
 from modules.config import ShowConfig
 from modules.filename_parser import FullMatch, ParsedFilename, parse_filename
+from modules.media_formats import group_image_sequence_paths, strip_sequence_frame_suffix
 from modules.setup import StaleFolder, detect_stale_folders
 
 
@@ -63,31 +64,62 @@ def _walk_filenames(folder: Path) -> list[str]:
     return sorted(f.name for f in folder.iterdir() if f.is_file())
 
 
+def _file_size(path: Path) -> int:
+    try:
+        return path.stat().st_size
+    except OSError:
+        return 0
+
+
 def _list_folder_files(folder: Path) -> list[MediaFileEntry]:
-    """Return sorted file entries (name + size) for files in folder."""
+    """Return sorted logical file entries (image sequences collapsed to one row)."""
     if not folder.exists():
         return []
+    paths = [entry for entry in folder.iterdir() if entry.is_file()]
+    sequences, singletons = group_image_sequence_paths(paths)
     entries: list[MediaFileEntry] = []
-    for entry in sorted(folder.iterdir(), key=lambda p: p.name.lower()):
-        if entry.is_file():
-            try:
-                size = entry.stat().st_size
-            except OSError:
-                size = 0
-            entries.append(MediaFileEntry(filename=entry.name, size_bytes=size))
-    return entries
+
+    for members in sequences:
+        logical_name = strip_sequence_frame_suffix(members[0].name)
+        total_size = sum(_file_size(member) for member in members)
+        entries.append(MediaFileEntry(filename=logical_name, size_bytes=total_size))
+
+    for path in singletons:
+        entries.append(MediaFileEntry(filename=path.name, size_bytes=_file_size(path)))
+
+    return sorted(entries, key=lambda entry: entry.filename.lower())
+
+
+def _parse_logical_filename(
+    filename: str,
+    config: ShowConfig,
+    parsed: list[ParsedFilename],
+    unparsed: list[str],
+) -> None:
+    result = parse_filename(filename, config)
+    if isinstance(result, FullMatch):
+        parsed.append(result.parsed)
+    else:
+        unparsed.append(filename)
 
 
 def _parse_folder(folder: Path, config: ShowConfig) -> tuple[list[ParsedFilename], list[str]]:
-    """Parse all files in folder; return (fully-parsed list, unparsed filenames)."""
-    parsed:   list[ParsedFilename] = []
-    unparsed: list[str]            = []
-    for name in _walk_filenames(folder):
-        result = parse_filename(name, config)
-        if isinstance(result, FullMatch):
-            parsed.append(result.parsed)
-        else:
-            unparsed.append(name)
+    """Parse logical assets in folder; image sequences count as one filename."""
+    if not folder.exists():
+        return [], []
+
+    paths = [entry for entry in folder.iterdir() if entry.is_file()]
+    sequences, singletons = group_image_sequence_paths(paths)
+    parsed: list[ParsedFilename] = []
+    unparsed: list[str] = []
+
+    for members in sequences:
+        logical_name = strip_sequence_frame_suffix(members[0].name)
+        _parse_logical_filename(logical_name, config, parsed, unparsed)
+
+    for path in singletons:
+        _parse_logical_filename(path.name, config, parsed, unparsed)
+
     return parsed, unparsed
 
 
@@ -108,7 +140,7 @@ def _detect_multi_version_slugs(
     return [
         (label, sorted(versions, key=lambda x: x.version))
         for label, versions in sorted(groups.items())
-        if len(versions) > 1
+        if len(versions) > 1 and len({v.version for v in versions}) > 1
     ]
 
 

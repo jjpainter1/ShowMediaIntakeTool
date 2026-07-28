@@ -12,7 +12,38 @@ const RESOLUTION_RE = /^\d+x\d+$/
 
 export const DEFAULT_FILENAME_TOKENS = ['screen', 'content', 'version', 'date'] as const
 
-export const REQUIRED_FILENAME_TOKENS = ['screen', 'content', 'version', 'date'] as const
+export const DEFAULT_IMAGE_EXTENSIONS = [
+  '.jpg',
+  '.jpeg',
+  '.png',
+  '.tga',
+  '.tif',
+  '.tiff',
+  '.exr',
+] as const
+
+export function defaultExpectedMedia(): NonNullable<ShowConfigData['expected_media']> {
+  return {
+    accept_stills: false,
+    image_extensions: [...DEFAULT_IMAGE_EXTENSIONS],
+    allow_image_sequences: true,
+  }
+}
+
+export function expectedMediaFrom(config: ShowConfigData): NonNullable<ShowConfigData['expected_media']> {
+  const media = config.expected_media
+  if (!media) {
+    return defaultExpectedMedia()
+  }
+  return {
+    accept_stills: Boolean(media.accept_stills),
+    image_extensions: media.image_extensions?.length
+      ? [...media.image_extensions]
+      : [...DEFAULT_IMAGE_EXTENSIONS],
+    allow_image_sequences: Boolean(media.allow_image_sequences),
+    ...(media.video_extensions ? { video_extensions: [...media.video_extensions] } : {}),
+  }
+}
 
 export const ALL_FILENAME_TOKENS = [
   'show_token',
@@ -41,23 +72,23 @@ export const FILENAME_TOKEN_META: Record<
   },
   screen: {
     label: 'Screen',
-    hint: 'Routes file to the matching screen folder',
-    optional: false,
+    hint: 'Routes file to the matching screen folder (required for routed intake)',
+    optional: true,
   },
   content: {
     label: 'Content',
     hint: 'Asset slug; optional -LOOP suffix',
-    optional: false,
+    optional: true,
   },
   version: {
     label: 'Version',
     hint: 'e.g. v01, v02',
-    optional: false,
+    optional: true,
   },
   date: {
     label: 'Date',
     hint: 'YYYYMMDD delivery date',
-    optional: false,
+    optional: true,
   },
 }
 
@@ -249,14 +280,14 @@ export function validateExpectedSpecs(config: ShowConfigData): FieldErrors {
     if (tokenSet.size !== tokens.length) {
       errors.filename_convention = 'Each token can only appear once in the pattern'
     }
-    const missingRequired = REQUIRED_FILENAME_TOKENS.filter((token) => !tokenSet.has(token))
-    if (missingRequired.length) {
-      errors.filename_convention = `Pattern must include: ${missingRequired.map((t) => FILENAME_TOKEN_META[t].label).join(', ')}`
-    }
     const intakeMode = config.intake?.mode ?? 'routed'
     if (intakeMode === 'routed' && !tokens.includes('screen')) {
       errors.filename_convention = 'Screen token is required for routed intake'
     }
+  }
+  const media = expectedMediaFrom(config)
+  if (media.accept_stills && !media.image_extensions.length) {
+    errors.expected_media = 'Select at least one still image format'
   }
   return errors
 }
@@ -367,5 +398,6 @@ export function buildConfigPayload(config: ShowConfigData): ShowConfigData {
           },
         }
       : { enabled: false },
+    expected_media: expectedMediaFrom(config),
   }
 }

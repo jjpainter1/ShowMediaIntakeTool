@@ -26,6 +26,10 @@ function resolutionLabel(file: ScreenFileDetail): string {
 }
 
 function fpsLabel(file: ScreenFileDetail): string {
+  const kind = file.specs.media_kind
+  if (kind === 'image' || kind === 'image_sequence') {
+    return 'N/A'
+  }
   const fps = file.specs.framerate
   if (fps == null) {
     return '—'
@@ -133,7 +137,9 @@ export function FilePanel({ showPath, screen, inline = false }: FilePanelProps) 
           <span className="screen-id">{screen.screen_id}</span>
           <strong>{screen.screen_name}</strong>
           <span className="screen-resolution">{screen.resolution ?? '—'}</span>
-          <span className="file-panel-count">{screen.file_count} files</span>
+          <span className="file-panel-count">
+            {loading ? screen.file_count : files.length} files
+          </span>
         </header>
       )}
       {loading && <p className="file-panel-empty">Reading file specs…</p>}
@@ -181,7 +187,12 @@ export function FilePanel({ showPath, screen, inline = false }: FilePanelProps) 
             <tbody>
               {sortedFiles.map((file) => (
                 <tr key={file.filename} className={rowTone(file)}>
-                  <td className="file-name">{file.filename}</td>
+                  <td className="file-name">
+                    {file.filename}
+                    {file.specs.frame_count != null && file.specs.frame_count > 1 && (
+                      <span className="file-seq-badge">{file.specs.frame_count} frames</span>
+                    )}
+                  </td>
                   <td className="file-size">{formatFileSize(file.size_bytes)}</td>
                   <td className={`intake-spec-${file.spec_status.resolution}`}>
                     {resolutionLabel(file)}

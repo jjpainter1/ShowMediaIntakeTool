@@ -12,7 +12,8 @@ if (-not (Test-Path $python)) {
 
 $tests = @(
     "scripts\test_filename_parser.py",
-    "scripts\test_intake_routing.py"
+    "scripts\test_intake_routing.py",
+    "scripts\test_media_intake.py"
 )
 
 $failures = 0

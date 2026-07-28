@@ -4,6 +4,12 @@ import json
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from modules.config import ShowConfig
+
+from modules.media_formats import derive_media_kind
 
 # ---------------------------------------------------------------------------
 # Codec tag mapping  (DESIGN-V2.md §5.6)
@@ -74,6 +80,7 @@ class MediaSpecs:
     # Probe status
     probe_succeeded:  bool
     probe_error:      str   | None
+    media_kind: str = "video"  # video | image | image_sequence | unknown
 
 
 # ---------------------------------------------------------------------------
@@ -93,7 +100,12 @@ def check_ffprobe_available() -> bool:
         return False
 
 
-def probe_file(path: Path) -> MediaSpecs:
+def probe_file(
+    path: Path,
+    config: ShowConfig | None = None,
+    *,
+    sequence: bool = False,
+) -> MediaSpecs:
     """Run ffprobe on path and return a MediaSpecs with all available fields.
 
     probe_succeeded is True when ffprobe exited cleanly and returned valid JSON,
@@ -167,6 +179,19 @@ def probe_file(path: Path) -> MediaSpecs:
     if duration_seconds is None and video_stream:
         duration_seconds = _float_or_none(video_stream.get("duration"))
 
+    media_kind = "unknown"
+    if config is not None:
+        media_kind = derive_media_kind(
+            path,
+            config,
+            codec_name=codec_name,
+            sequence=sequence,
+        )
+    elif codec_name and codec_name.lower() in {"png", "jpeg", "mjpeg", "tiff", "tga", "exr", "bmp", "gif"}:
+        media_kind = "image"
+    else:
+        media_kind = "video"
+
     return MediaSpecs(
         width=width,
         height=height,
@@ -178,6 +203,7 @@ def probe_file(path: Path) -> MediaSpecs:
         audio_sample_rate=audio_sample_rate,
         audio_channels=audio_channels,
         duration_seconds=duration_seconds,
+        media_kind=media_kind,
         probe_succeeded=True,
         probe_error=None,
     )
@@ -194,6 +220,7 @@ def _empty_specs(error: str) -> MediaSpecs:
         color_space=None, color_range=None,
         audio_sample_rate=None, audio_channels=None,
         duration_seconds=None,
+        media_kind="unknown",
         probe_succeeded=False,
         probe_error=error,
     )

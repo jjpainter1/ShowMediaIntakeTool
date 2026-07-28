@@ -10,6 +10,7 @@ import {
 import {
   ApiError,
   executeIntake,
+  copyProgressPercent,
   fetchShowConfig,
   formatIntakeError,
   openIntakeLog,
@@ -81,7 +82,22 @@ function resolutionLabel(plan: IntakeFilePlan): string {
   return `${specs.width}×${specs.height}`
 }
 
+function codecLabel(plan: IntakeFilePlan): string {
+  const kind = plan.media_kind ?? plan.specs?.media_kind
+  if (kind === 'image_sequence') {
+    return 'sequence'
+  }
+  if (kind === 'image') {
+    return 'still'
+  }
+  return plan.specs?.codec ?? '—'
+}
+
 function fpsLabel(plan: IntakeFilePlan): string {
+  const kind = plan.media_kind ?? plan.specs?.media_kind
+  if (kind === 'image' || kind === 'image_sequence') {
+    return 'N/A'
+  }
   const fps = plan.specs?.framerate
   if (fps == null) {
     return '—'
@@ -132,6 +148,10 @@ function conflictLabel(plan: IntakeFilePlan): string | null {
   return `${screen_prefix}_${slug}: ${active} (currently active) and ${incoming} (incoming)`
 }
 
+function planFileCount(plan: IntakeFilePlan): number {
+  return plan.sequence_paths?.length ?? 1
+}
+
 export function IntakeView({ show, onBusyChange, onComplete }: IntakeViewProps) {
   const [phase, setPhase] = useState<IntakePhase>('select')
   const [sourcePath, setSourcePath] = useState(() => getIntakeSourcePath(show.path))
@@ -140,7 +160,16 @@ export function IntakeView({ show, onBusyChange, onComplete }: IntakeViewProps) 
   const [filter, setFilter] = useState<PlanFilter>('all')
   const [sortKey, setSortKey] = useState<SortKey>('filename')
   const [sortAsc, setSortAsc] = useState(true)
-  const [copyProgress, setCopyProgress] = useState({ current: 0, total: 0, percent: 0 })
+  const [copyProgress, setCopyProgress] = useState({
+    current: 0,
+    total: 0,
+    percent: 0,
+    filename: '',
+    bytesCopied: 0,
+    bytesTotal: 0,
+    jobBytesCopied: 0,
+    jobBytesTotal: 0,
+  })
   const [copyLog, setCopyLog] = useState<{ text: string; tone: 'default' | 'ok' | 'fail' }[]>([])
   const [executeResult, setExecuteResult] = useState<IntakeExecuteResult | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -279,8 +308,19 @@ export function IntakeView({ show, onBusyChange, onComplete }: IntakeViewProps) 
     setPhase('copying')
     setCopyLog([])
     const actionable = scanResult.plans.filter((p) => p.action !== 'SKIP_IDENTICAL')
+    const totalFiles = actionable.reduce((sum, plan) => sum + planFileCount(plan), 0)
+    const jobBytesTotal = actionable.reduce((sum, plan) => sum + plan.size_bytes, 0)
     copyDoneRef.current = 0
-    setCopyProgress({ current: 0, total: actionable.length, percent: 0 })
+    setCopyProgress({
+      current: 0,
+      total: totalFiles,
+      percent: 0,
+      filename: '',
+      bytesCopied: 0,
+      bytesTotal: 0,
+      jobBytesCopied: 0,
+      jobBytesTotal: jobBytesTotal,
+    })
 
     try {
       const result = await executeIntake(
@@ -289,19 +329,30 @@ export function IntakeView({ show, onBusyChange, onComplete }: IntakeViewProps) 
         scanResult.plans,
         scanResult.stale_folders,
         (progress) => {
-          const total = progress.total || actionable.length
+          const total = progress.total || totalFiles
           if (progress.status === 'skipped') {
             return
           }
-          copyDoneRef.current = progress.current
-          setCopyProgress({
+
+          const nextProgress = {
             current: progress.current,
             total,
-            percent: total > 0 ? Math.round((progress.current / total) * 100) : 0,
-          })
-          const sizePlan = scanResult.plans.find((p) => p.filename === progress.filename)
-          const sizeStr = sizePlan ? formatFileSize(sizePlan.size_bytes) : ''
-          const line = `Copying ${progress.current} of ${total}: ${progress.filename} (${sizeStr})... ${
+            percent: copyProgressPercent(progress),
+            filename: progress.filename,
+            bytesCopied: progress.bytes_copied ?? 0,
+            bytesTotal: progress.bytes_total ?? 0,
+            jobBytesCopied: progress.job_bytes_copied ?? 0,
+            jobBytesTotal: progress.job_bytes_total ?? jobBytesTotal,
+          }
+
+          if (progress.status === 'copying') {
+            setCopyProgress(nextProgress)
+            return
+          }
+
+          copyDoneRef.current = progress.current
+          setCopyProgress(nextProgress)
+          const line = `Copied ${progress.current} of ${total}: ${progress.filename} — ${
             progress.status === 'done' ? 'done' : 'FAILED'
           }`
           setCopyLog((lines) => [
@@ -549,6 +600,13 @@ export function IntakeView({ show, onBusyChange, onComplete }: IntakeViewProps) 
         <CopyLogPanel
           title="Copying Files…"
           percent={copyProgress.percent}
+          current={copyProgress.current}
+          total={copyProgress.total}
+          activeFilename={copyProgress.filename}
+          fileBytesCopied={copyProgress.bytesCopied}
+          fileBytesTotal={copyProgress.bytesTotal}
+          jobBytesCopied={copyProgress.jobBytesCopied}
+          jobBytesTotal={copyProgress.jobBytesTotal}
           copyLog={copyLog}
           logEndRef={logEndRef}
           frozen={false}
@@ -573,6 +631,13 @@ export function IntakeView({ show, onBusyChange, onComplete }: IntakeViewProps) 
         <CopyLogPanel
           title="Copying Files"
           percent={100}
+          current={copyProgress.total}
+          total={copyProgress.total}
+          activeFilename=""
+          fileBytesCopied={copyProgress.jobBytesCopied}
+          fileBytesTotal={copyProgress.jobBytesTotal}
+          jobBytesCopied={copyProgress.jobBytesCopied}
+          jobBytesTotal={copyProgress.jobBytesTotal}
           copyLog={copyLog}
           logEndRef={logEndRef}
           frozen
@@ -596,6 +661,11 @@ export function IntakeView({ show, onBusyChange, onComplete }: IntakeViewProps) 
               {copiedPlans.map((plan) => (
                 <li key={plan.source_path}>
                   <span>{plan.filename}</span>
+                  {plan.infos?.map((info) => (
+                    <p key={info} className="intake-sub-info">
+                      INFO: {info}
+                    </p>
+                  ))}
                   {plan.warnings.map((w) => (
                     <p key={w} className="intake-sub-warn">
                       WARN: {w}
@@ -692,23 +762,76 @@ export function IntakeView({ show, onBusyChange, onComplete }: IntakeViewProps) 
 function CopyLogPanel({
   title,
   percent,
+  current,
+  total,
+  activeFilename,
+  fileBytesCopied,
+  fileBytesTotal,
+  jobBytesCopied,
+  jobBytesTotal,
   copyLog,
   logEndRef,
   frozen,
 }: {
   title: string
   percent: number
+  current: number
+  total: number
+  activeFilename: string
+  fileBytesCopied: number
+  fileBytesTotal: number
+  jobBytesCopied: number
+  jobBytesTotal: number
   copyLog: { text: string; tone: 'default' | 'ok' | 'fail' }[]
   logEndRef: RefObject<HTMLDivElement | null>
   frozen: boolean
 }) {
+  const showIndeterminate =
+    !frozen &&
+    activeFilename &&
+    percent === 0 &&
+    jobBytesCopied === 0 &&
+    fileBytesCopied === 0
+  const progressLabel =
+    jobBytesTotal > 0
+      ? `${percent}% complete — ${formatFileSize(jobBytesCopied)} of ${formatFileSize(jobBytesTotal)}`
+      : total > 0
+        ? `${percent}% complete (${current} of ${total} files)`
+        : `${percent}% complete`
+  const filePercent =
+    fileBytesTotal > 0 ? Math.min(100, Math.round((fileBytesCopied / fileBytesTotal) * 100)) : 0
+  const showFileBar =
+    !frozen && activeFilename && fileBytesTotal > 512 * 1024 && fileBytesCopied < fileBytesTotal
+
   return (
     <section className={`intake-copy-panel${frozen ? ' intake-copy-panel-frozen' : ''}`}>
-      <h2 className="intake-progress-title">{title}</h2>
-      <p className="intake-progress-label">{percent}% complete</p>
+      <h2 className="intake-progress-title">
+        {title}
+        {!frozen && <span className="intake-copy-active-dot" aria-hidden="true" />}
+      </h2>
+      <p className="intake-progress-label">{progressLabel}</p>
+      {activeFilename && !frozen && (
+        <p className="intake-progress-file intake-copy-active-file">{activeFilename}</p>
+      )}
+      {showFileBar && (
+        <p className="intake-copy-file-bytes">
+          Current file: {formatFileSize(fileBytesCopied)} of {formatFileSize(fileBytesTotal)} (
+          {filePercent}%)
+        </p>
+      )}
       <div className="intake-progress-track">
-        <div className="intake-progress-fill" style={{ width: `${percent}%` }} />
+        <div
+          className={`intake-progress-fill${
+            showIndeterminate ? ' intake-progress-indeterminate' : ''
+          }`}
+          style={showIndeterminate ? undefined : { width: `${percent}%` }}
+        />
       </div>
+      {showFileBar && (
+        <div className="intake-progress-track intake-progress-track-sub">
+          <div className="intake-progress-fill" style={{ width: `${filePercent}%` }} />
+        </div>
+      )}
       <div className="intake-copy-log">
         {copyLog.map((line, index) => (
           <p
@@ -737,17 +860,30 @@ function PlanTableRows({
         <td>
           <span className={`intake-badge ${badge.className}`}>{badge.label}</span>
         </td>
-        <td className="intake-filename">{plan.filename}</td>
+        <td className="intake-filename">
+          {plan.filename}
+          {(plan.frame_count ?? 1) > 1 && (
+            <span className="intake-frame-count"> ({plan.frame_count} frames)</span>
+          )}
+        </td>
         <td>{formatFileSize(plan.size_bytes)}</td>
         <td className={`intake-spec-${plan.spec_status.resolution}`}>
           {resolutionLabel(plan)}
         </td>
         <td className={`intake-spec-${plan.spec_status.codec}`}>
-          {plan.specs?.codec ?? '—'}
+          {codecLabel(plan)}
         </td>
         <td className={`intake-spec-${plan.spec_status.fps}`}>{fpsLabel(plan)}</td>
         <td className="intake-dest">{plan.destination_label}</td>
       </tr>
+      {plan.infos?.map((info) => (
+        <tr key={`i-${info}`} className="intake-row-sub intake-row-info">
+          <td />
+          <td colSpan={6}>
+            INFO: {info}
+          </td>
+        </tr>
+      ))}
       {plan.warnings.map((w) => (
         <tr key={`w-${w}`} className="intake-row-sub intake-row-warn">
           <td />

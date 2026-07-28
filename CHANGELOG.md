@@ -2,6 +2,33 @@
 
 All notable changes to Show Media Intake Tool v2 are documented here for GitHub releases and handoff notes.
 
+## [Unreleased]
+
+---
+
+## [2.2.0] — 2026-07-28
+
+Field-test release: still delivery formats, dashboard sequence grouping, and live copy progress.
+
+### Added
+
+- **Still images and image sequences** — Config → Expected Specs: accept still delivery formats (`.jpg`, `.png`, `.tga`, `.tiff`, `.exr`, …) and numbered sequences. ffprobe reads resolution; codec/framerate/audio checks are skipped for stills. Intake groups sequence frames, validates once, and copies all frames. Sequences are always detected as one asset during scan (fast), even when stills or a format are disabled.
+- **Dashboard — image sequence grouping** — Screen file panel and card counts treat numbered still sequences as one logical asset (one row, aggregated size, frame count badge). Probes first frame only for fast load.
+- **Intake copy progress** — Per-file/frame progress during multi-frame copies. Byte-level progress with live percent and transferred size for large files (chunked copy with throttled WebSocket updates).
+
+### Fixed
+
+- **Config — custom filename convention** — Custom patterns can include any subset of tokens (not all four defaults). Routed intake still requires the `screen` token for folder routing.
+- **Intake execute** — `sequence_paths` preserved through API round-trip so all sequence frames copy on execute.
+- **Dashboard** — FPS shows N/A for still images and sequences.
+- **Frontend** — Fixed white screen on dev load (`copyProgressPercent` export).
+
+### Packaging
+
+- Artifact: `dist/ShowMediaIntakeTool-v2.2.0-win64.zip` + `.sha256`
+
+---
+
 ## [2.1.1] — 2026-06-20
 
 ### Fixed
@@ -16,42 +43,27 @@ All notable changes to Show Media Intake Tool v2 are documented here for GitHub 
 
 ## [2.1.0] — 2026-06-19
 
-First recommended public release zip after initial field testing.
-
 ### Added
 
+- **Phase 6 — Generate Spec Doc** GUI screen (backend API + frontend).
+- **Flat intake mode** — scan delivery folder; valid files copy to `Media\_INCOMING` with original names.
+- **Per-screen spec overrides** when `output_specs.mode` is `per_screen`.
+- **Configurable filename convention** — token order, version prefix, date format, loop suffix, show token.
 - **Windows distribution** — versioned zip, `setup.cmd`, desktop launcher, bundled FFmpeg, per-user Python install (`PACKAGING.md`).
-- **Output spec mode** (`output_specs.mode`: `uniform` | `per_screen`) for mixed LED/projector shows.
-- **Flat intake mode** (`intake.mode: "flat"`) — union spec validation across all screens; passing files copy to `Media/_INCOMING/` with original filenames; strict failures go to `_REVIEW`.
-- **Configurable filename convention** — token builder in Config; validation strictness per field.
-- **Per-screen expected specs** (`screens[].expected_specs`) with merged validation on routed intake.
-- **Project app icon** — `assets/branding/` → Tauri bundle, Windows `.exe`, browser favicon.
-- **Dev workflow** — `scripts/dev.cmd`, `setup-dev.cmd`, `run-tests.ps1`, root `package.json` npm helpers.
-
-### Changed
-
-- **Filename parser** — detects tokens in any order (not only configured token order).
-- **Flat intake** — removed per-batch target screen picker; auto-route validated files to `_INCOMING`.
-- **Routed intake** — validates framerate, color, and audio against per-screen merged specs when filename targets `SCR##`.
-- **Dashboard** — on-disk file validation uses the screen folder context.
-- Removed legacy `PixeraIntakeTool/` v1 tree and unused prototype modules.
 
 ### Fixed
 
-- **Production GUI** — backend CORS for Tauri `http://tauri.localhost`; `start-backend.ps1` no longer dies on uvicorn stderr logs.
-- **Dev launcher** — frees ports 8000 and 1420 before start; supports `.venv` via `setup-dev`.
+- Config load vs save validation split (open shows with incomplete fields; save still validates).
+- Spec generator maps all template placeholders from saved config except manual Delivery Target date.
 
 ### Packaging
 
 - Artifact: `dist/ShowMediaIntakeTool-v2.1.0-win64.zip` + `.sha256`
-- Install: extract → `scripts\setup.cmd` → desktop shortcut (do not double-click `.exe` alone).
 
 ---
 
-## [2.0.1] — 2026-06-18 (internal)
+## [2.0.0] — 2026-06-18
 
+- Initial Tauri + React + FastAPI v2 desktop app.
+- Launch screen, dashboard, intake wizard, config editor.
 - Flat intake union validation and `_INCOMING` routing (superseded by 2.1.0 release bundle).
-
-## [2.0.0] — 2026-06-18 (internal)
-
-- Initial Tauri + FastAPI build; first zip smoke-tested on a clean Windows VM.

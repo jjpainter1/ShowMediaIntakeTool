@@ -4,7 +4,7 @@ A Windows desktop app for **validating, organizing, and delivering** media files
 
 Built for operators and producers working with **Pixera**, **PlayBack Pro**, **Mitti**, and similar playback systems.
 
-**Latest release:** [Download v2.1.1](https://github.com/jjpainter1/ShowMediaIntakeTool/releases/latest) (Windows 64-bit zip)
+**Latest release:** [Download v2.2.0](https://github.com/jjpainter1/ShowMediaIntakeTool/releases/latest) (Windows 64-bit zip)
 
 ![Dashboard with screen cards, per-file validation, review queue, and delivery stats](docs/images/README-dashboard.png)
 
@@ -27,7 +27,7 @@ The tool **never deletes** media and **never moves files already in active scree
 
 **Requirements:** Windows 10/11 (64-bit), ~500 MB disk space, internet on first setup (Python install).
 
-1. Download **`ShowMediaIntakeTool-v2.1.1-win64.zip`** from [Releases](https://github.com/jjpainter1/ShowMediaIntakeTool/releases).
+1. Download **`ShowMediaIntakeTool-v2.2.0-win64.zip`** from [Releases](https://github.com/jjpainter1/ShowMediaIntakeTool/releases).
 2. Extract to a permanent folder (e.g. `C:\Tools\ShowMediaIntakeTool\`).
 3. Run **`scripts\setup.cmd`** (first time only).
 4. Launch via the **desktop shortcut** — do not double-click the `.exe` alone.
@@ -70,6 +70,7 @@ Per-show settings in `show_config.json` (editable in the app):
 - Screens, resolutions, and output specs (uniform or **per-screen** for mixed LED/projector rigs)
 - Expected codecs (ProRes, NotchLC, H.264, DNxHD, …) and preferred flavors
 - **Validation strictness** per field (`strict` / `warn` / `info` / `ignore`)
+- **Still images & sequences** — `.jpg`, `.png`, `.tga`, `.tiff`, `.exr`, and numbered frame sequences (resolution validated; codec/framerate/audio skipped for stills)
 - **Filename convention** — default pattern or custom token order (show token, screen, content, version, date, …)
 - **Presets** for Pixera, PlayBack Pro, Mitti (starting points you can customize)
 
@@ -149,6 +150,16 @@ With a **custom convention** enabled, you define token order in Config. The pars
 | [CHANGELOG.md](CHANGELOG.md) | Everyone | Release history |
 | [AGENT-INTEGRATION.md](AGENT-INTEGRATION.md) | Future | Headless / AI agent integration goals |
 | [PROGRESS.md](PROGRESS.md) | Developers | Implementation status |
+
+---
+
+## Known issues
+
+Issues confirmed in real-world use on v2.1.x. Fixes are planned; see [PROGRESS.md](PROGRESS.md) (Planned updates).
+
+| Issue | What you see | Workaround |
+|-------|----------------|------------|
+| **Launcher terminal stays visible** | A black PowerShell/Terminal window opens when you launch from the desktop shortcut and stays open until you close the app (shows “Starting backend…” / “Backend ready”). | Safe to ignore—the GUI is the app. The window is the launcher script, not the backend. Close it only after closing the app if you want to stop the backend manually. |
 
 ---
 

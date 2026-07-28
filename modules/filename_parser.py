@@ -179,8 +179,6 @@ def _screen_pattern(screen_ids: list[str]) -> str:
 
 def _build_convention_regex(config: ShowConfig) -> re.Pattern[str] | None:
     convention = config.filename_convention
-    if ROUTING_TOKEN not in convention.tokens:
-        return None
     screen_ids = [s.id for s in config.screens]
     group_parts: list[str] = []
     for token in convention.tokens:
@@ -201,6 +199,8 @@ def _build_convention_regex(config: ShowConfig) -> re.Pattern[str] | None:
             group_parts.append(f"(?P<initials>{_INITIALS_PAT})")
         else:
             return None
+    if not group_parts:
+        return None
     return re.compile("^" + "_".join(group_parts) + "$")
 
 
@@ -219,8 +219,9 @@ def _parse_configurable(filename: str, config: ShowConfig) -> ParseResult:
     parts = stem.split("_")
     found, used_indices = _collect_flexible_tokens(parts, config)
     screen_val = found.get("screen")
+    requires_screen = ROUTING_TOKEN in convention.tokens
 
-    if not screen_val:
+    if requires_screen and not screen_val:
         for part in parts:
             if _PREFIX_LOOSE_RE.match(part):
                 loose_problems = [f"'{part}' is not a valid screen token — "] + _diagnose_prefix(part)
@@ -229,7 +230,7 @@ def _parse_configurable(filename: str, config: ShowConfig) -> ParseResult:
         return NoMatch(original=filename, problems=["No recognisable screen token in filename"])
 
     problems = _problems_for_token_values(found, parts, used_indices, config)
-    if not is_valid_screen_prefix(screen_val, config):
+    if requires_screen and screen_val and not is_valid_screen_prefix(screen_val, config):
         problems = (
             [f"'{screen_val}' is not a valid screen token for this show"]
             + _diagnose_prefix(screen_val)
@@ -240,7 +241,8 @@ def _parse_configurable(filename: str, config: ShowConfig) -> ParseResult:
     if not problems:
         return _full_match_from_flexible(found, ext, filename, convention)
 
-    return PartialMatch(screen_prefix=screen_val, original=filename, problems=problems)
+    prefix = screen_val or ""
+    return PartialMatch(screen_prefix=prefix, original=filename, problems=problems)
 
 
 def _collect_flexible_tokens(
@@ -344,42 +346,48 @@ def _full_match_from_groups(
     filename: str,
     convention,
 ) -> ParseResult | FullMatch:
+    tokens = convention.tokens
     screen = groups.get("screen", "")
-    content = groups.get("content", "")
-    version_str = groups.get("version", "")
-    date_str = groups.get("date", "")
-    show_token = groups.get("show_token")
-    initials = groups.get("initials")
+    show_token = groups.get("show_token") if "show_token" in tokens else None
+    initials = groups.get("initials") if "initials" in tokens else None
 
-    parsed_date = _parse_date(date_str)
-    if parsed_date is None:
-        return PartialMatch(
-            screen_prefix=screen,
-            original=filename,
-            problems=[f"Date '{date_str}' is not a valid calendar date"],
-        )
-
-    prefix = convention.version_prefix
-    if not version_str.startswith(prefix):
-        return PartialMatch(
-            screen_prefix=screen,
-            original=filename,
-            problems=[f"Version '{version_str}' must start with '{prefix}'"],
-        )
-
-    version_num = int(version_str[len(prefix):])
-    slug = content
-    if convention.allow_loop_suffix and slug.endswith("-LOOP"):
-        is_loop = True
-    else:
+    if "content" in tokens:
+        slug = groups.get("content", "")
+        if not re.match(rf"^{_SLUG_PAT}$", slug):
+            return PartialMatch(
+                screen_prefix=screen,
+                original=filename,
+                problems=[f"Content '{slug}' contains invalid characters"],
+            )
         is_loop = slug.endswith("-LOOP")
+    else:
+        slug = ""
+        is_loop = False
 
-    if not re.match(rf"^{_SLUG_PAT}$", slug):
-        return PartialMatch(
-            screen_prefix=screen,
-            original=filename,
-            problems=[f"Content '{slug}' contains invalid characters"],
-        )
+    if "version" in tokens:
+        version_str = groups.get("version", "")
+        prefix = convention.version_prefix
+        if not version_str.startswith(prefix):
+            return PartialMatch(
+                screen_prefix=screen,
+                original=filename,
+                problems=[f"Version '{version_str}' must start with '{prefix}'"],
+            )
+        version_num = int(version_str[len(prefix):])
+    else:
+        version_num = 0
+
+    if "date" in tokens:
+        date_str = groups.get("date", "")
+        parsed_date = _parse_date(date_str)
+        if parsed_date is None:
+            return PartialMatch(
+                screen_prefix=screen,
+                original=filename,
+                problems=[f"Date '{date_str}' is not a valid calendar date"],
+            )
+    else:
+        parsed_date = date(2000, 1, 1)
 
     if initials and not re.match(rf"^{_INITIALS_PAT}$", initials):
         return PartialMatch(

@@ -24,6 +24,8 @@ import {
   DEFAULT_SCREEN_NOTES,
   FILENAME_TOKEN_META,
   DEFAULT_FILENAME_TOKENS,
+  DEFAULT_IMAGE_EXTENSIONS,
+  expectedMediaFrom,
   type FilenameTokenId,
   isPerScreenOutput,
   isSpecNa,
@@ -341,6 +343,101 @@ function CodecTags({
           </button>
         )}
       </div>
+      {error && <span className="config-field-error">{error}</span>}
+    </div>
+  )
+}
+
+type ImageFormatSectionProps = {
+  config: ShowConfigData
+  onChange: (media: NonNullable<ShowConfigData['expected_media']>) => void
+  error?: string
+}
+
+function ImageFormatSection({ config, onChange, error }: ImageFormatSectionProps) {
+  const media = expectedMediaFrom(config)
+
+  function toggleExtension(ext: string) {
+    const selected = media.image_extensions.includes(ext)
+    const next = selected
+      ? media.image_extensions.filter((item) => item !== ext)
+      : [...media.image_extensions, ext]
+    onChange({ ...media, image_extensions: next })
+  }
+
+  return (
+    <div className="config-still-section">
+      <label className="field">
+        <span>Accept still images in intake</span>
+        <select
+          value={media.accept_stills ? 'yes' : 'no'}
+          onChange={(event) =>
+            onChange({
+              ...media,
+              accept_stills: event.target.value === 'yes',
+            })
+          }
+        >
+          <option value="yes">Yes — stills and numbered sequences</option>
+          <option value="no">No — video files only</option>
+        </select>
+        <span className="field-hint">
+          Codec, framerate, and audio checks are skipped for stills. Resolution is still validated.
+        </span>
+      </label>
+
+      {media.accept_stills && (
+        <>
+          <div className="config-section-heading">
+            <strong>Accepted image formats</strong>
+            <span className="field-hint">
+              Click a format to enable or disable. Sequences are detected by numbered suffixes
+              (e.g. _0001 … _0120).
+            </span>
+          </div>
+          <div className="config-image-ext-tags">
+            {DEFAULT_IMAGE_EXTENSIONS.map((ext) => {
+              const selected = media.image_extensions.includes(ext)
+              return (
+                <button
+                  key={ext}
+                  type="button"
+                  className={[
+                    'config-image-ext-tag',
+                    selected ? 'config-image-ext-tag-active' : '',
+                  ]
+                    .filter(Boolean)
+                    .join(' ')}
+                  onClick={() => toggleExtension(ext)}
+                  aria-pressed={selected}
+                >
+                  <code>{ext}</code>
+                </button>
+              )
+            })}
+          </div>
+
+          <label className="field">
+            <span>Numbered image sequences</span>
+            <select
+              value={media.allow_image_sequences ? 'group' : 'individual'}
+              onChange={(event) =>
+                onChange({
+                  ...media,
+                  allow_image_sequences: event.target.value === 'group',
+                })
+              }
+            >
+              <option value="group">Group frames as one asset in intake</option>
+              <option value="individual">Treat each frame as a separate file</option>
+            </select>
+            <span className="field-hint">
+              Grouped sequences validate once and copy all frames together.
+            </span>
+          </label>
+        </>
+      )}
+
       {error && <span className="config-field-error">{error}</span>}
     </div>
   )
@@ -1280,6 +1377,18 @@ export function ConfigView({ show, onSaved, onDirtyChange }: ConfigViewProps) {
                 error={fieldErrors.filename_convention}
               />
             )}
+
+            <h3 className="config-section-title">Still images & sequences</h3>
+            <ImageFormatSection
+              config={config}
+              onChange={(media) =>
+                updateConfig((current) => ({
+                  ...current,
+                  expected_media: media,
+                }))
+              }
+              error={fieldErrors.expected_media}
+            />
 
             <h3 className="config-section-title">Codecs</h3>
             <CodecTags

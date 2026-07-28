@@ -66,6 +66,7 @@ def _specs_to_dict(specs: MediaSpecs | None) -> dict | None:
         "height": specs.height,
         "framerate": specs.framerate,
         "codec": codec_id,
+        "media_kind": specs.media_kind,
         "probe_succeeded": specs.probe_succeeded,
         "probe_error": specs.probe_error,
     }
@@ -85,6 +86,7 @@ def _specs_from_dict(data: dict | None) -> MediaSpecs | None:
         audio_sample_rate=None,
         audio_channels=None,
         duration_seconds=None,
+        media_kind=data.get("media_kind", "video"),
         probe_succeeded=bool(data.get("probe_succeeded", True)),
         probe_error=data.get("probe_error"),
     )
@@ -175,6 +177,14 @@ def _action_from_name(name: str) -> Action:
     return Action[name]
 
 
+def _plan_total_bytes(plan: FilePlan) -> int:
+    if plan.sequence_paths:
+        return sum(p.stat().st_size for p in plan.sequence_paths if p.exists())
+    if plan.source_path.exists():
+        return plan.source_path.stat().st_size
+    return 0
+
+
 def file_plan_to_dict(plan: FilePlan, show_root: Path | None = None) -> dict:
     if isinstance(plan.parsed, FullMatch):
         parsed = {"kind": "full", "parsed": _parsed_filename_dict(plan.parsed.parsed)}
@@ -201,7 +211,8 @@ def file_plan_to_dict(plan: FilePlan, show_root: Path | None = None) -> dict:
             "incoming_version": plan.version_conflict.incoming_version,
         }
 
-    size_bytes = plan.source_path.stat().st_size if plan.source_path.exists() else 0
+    size_bytes = _plan_total_bytes(plan)
+    frame_count = len(plan.sequence_paths) if plan.sequence_paths else 1
 
     return {
         "filename": plan.source_path.name,
@@ -210,13 +221,17 @@ def file_plan_to_dict(plan: FilePlan, show_root: Path | None = None) -> dict:
         "specs": _specs_to_dict(plan.specs),
         "spec_status": _spec_status(plan.warnings, plan.failures),
         "size_bytes": size_bytes,
+        "frame_count": frame_count,
+        "media_kind": plan.media_kind,
         "target_screen": plan.target_screen,
         "destination_path": str(plan.destination_path),
         "destination_label": _destination_label(plan, show_root) if show_root else "",
         "action": _action_name(plan.action),
         "warnings": plan.warnings,
+        "infos": plan.infos,
         "failures": plan.failures,
         "version_conflict": version_conflict,
+        "sequence_paths": [str(p) for p in plan.sequence_paths],
     }
 
 
@@ -231,6 +246,8 @@ def file_plan_from_dict(data: dict) -> FilePlan:
             incoming_version=int(vc["incoming_version"]),
         )
 
+    sequence_paths = [Path(p) for p in data.get("sequence_paths", [])]
+
     return FilePlan(
         source_path=Path(data["source_path"]),
         parsed=_parse_result_from_dict(data["parsed"]),
@@ -240,7 +257,10 @@ def file_plan_from_dict(data: dict) -> FilePlan:
         action=_action_from_name(data["action"]),
         warnings=list(data.get("warnings", [])),
         failures=list(data.get("failures", [])),
+        infos=list(data.get("infos", [])),
         version_conflict=version_conflict,
+        media_kind=str(data.get("media_kind", "video")),
+        sequence_paths=sequence_paths,
     )
 
 

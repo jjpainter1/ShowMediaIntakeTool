@@ -32,7 +32,7 @@ scripts\setup-dev.cmd
 scripts\dev.cmd
 ```
 
-Opens http://localhost:1420. Vite proxies `/api` (including WebSockets) to http://127.0.0.1:8000. Press **Ctrl+C** to stop both. Ports **8000** and **1420** are cleared automatically if still in use.
+Opens http://localhost:1420. Vite proxies `/api` (including WebSockets) to http://127.0.0.1:18080. Press **Ctrl+C** to stop both. Ports **18080** and **1420** are cleared automatically if still in use.
 
 **Tauri desktop shell (optional):**
 
@@ -59,7 +59,7 @@ Manual equivalent:
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
-python -m uvicorn backend.main:app --reload --host 127.0.0.1 --port 8000
+python -m uvicorn backend.main:app --reload --host 127.0.0.1 --port 18080
 ```
 
 ### React frontend
@@ -181,7 +181,7 @@ Dropbox can lock files under `node_modules` while syncing. This project sets Vit
 ### Backend not reachable in dev
 
 - Confirm `scripts\start-backend.ps1` is running (or use `scripts\dev.cmd`).
-- Check nothing else is bound to port **8000**.
+- Check nothing else is bound to port **18080**.
 
 ---
 

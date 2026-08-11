@@ -117,9 +117,9 @@ Use the saved system Python for all backend commands after setup completes.
 
 | Item | Value |
 |------|-------|
-| Command | `python -m uvicorn backend.main:app --host 127.0.0.1 --port 8000` |
+| Command | `python -m uvicorn backend.main:app --host 127.0.0.1 --port 18080` |
 | Reload | **Off** (no `--reload` in production) |
-| Health URL | `http://127.0.0.1:8000/api/health` |
+| Health URL | `http://127.0.0.1:18080/api/health` |
 | Expected JSON | `{ "status": "ok", "ffprobe_available": true, ... }` |
 
 ### Setup-complete marker
@@ -350,7 +350,7 @@ Pause if launched via `setup.cmd`.
 Daily launcher:
 
 1. Ensure environment (venv, FFmpeg PATH)
-2. Stop any stale backend on port 8000
+2. Stop any stale backend on port 18080
 3. Start backend
 4. Wait for health
 5. Open Tauri desktop app
@@ -396,7 +396,7 @@ Start as background process **without** a visible console:
 
 ```powershell
 $backend = Start-Process -FilePath "python" `
-    -ArgumentList "-m uvicorn backend.main:app --host 127.0.0.1 --port 8000" `
+    -ArgumentList "-m uvicorn backend.main:app --host 127.0.0.1 --port 18080" `
     -WorkingDirectory $InstallRoot `
     -WindowStyle Hidden `
     -PassThru
@@ -406,7 +406,7 @@ Record `$backend.Id` for cleanup.
 
 #### Step 4 — Wait for health
 
-Poll `Invoke-RestMethod http://127.0.0.1:8000/api/health` every 500ms, max 30s.
+Poll `Invoke-RestMethod http://127.0.0.1:18080/api/health` every 500ms, max 30s.
 
 | Outcome | Action |
 |---------|--------|
@@ -441,7 +441,7 @@ Exit `0`.
 
 | Condition | Message |
 |-----------|---------|
-| Port 8000 busy | *"Another copy may already be running, or another app is using port 8000. Close it and try again."* |
+| Port 18080 busy | *"Another copy may already be running, or another app is using port 18080. Close it and try again."* |
 | Backend won't start | *"Backend failed to start. Run scripts\setup.ps1 or check .venv exists."* |
 | Health timeout | *"Backend did not become ready in 30 seconds. Check Windows Firewall is not blocking localhost."* |
 
@@ -505,7 +505,7 @@ TROUBLESHOOTING
 
   "App says backend is not running"
     Run scripts\setup.cmd again.
-    Make sure no other program is using port 8000.
+    Make sure no other program is using port 18080.
 
   "ffprobe not available"
     Re-extract the zip — the tools\ffmpeg folder may be missing or incomplete.

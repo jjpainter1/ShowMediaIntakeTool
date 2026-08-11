@@ -251,7 +251,7 @@ Real-world show intake validated v2.1.x end-to-end. Three follow-ups surfaced fr
 
 ### 3. Hide launcher terminal window on startup
 
-**Problem:** Launching from the desktop shortcut opens a black PowerShell/Terminal window showing `Starting backend...` and `OK Backend ready on http://127.0.0.1:8000`. It stays open for the entire session until the GUI is closed. Operators expect a normal desktop app with no console.
+**Problem:** Launching from the desktop shortcut opens a black PowerShell/Terminal window showing `Starting backend...` and `OK Backend ready on http://127.0.0.1:18080`. It stays open for the entire session until the GUI is closed. Operators expect a normal desktop app with no console.
 
 **What is actually visible:** The **launcher** PowerShell process (`scripts/Launch Show Media Intake Tool.ps1`), not the backend. The backend is already started with `-WindowStyle Hidden` (line 31–35 of Launch.ps1). The Tauri `.exe` already uses `windows_subsystem = "windows"` (no console). The launcher remains visible because:
 
@@ -274,7 +274,7 @@ Hide the launcher PowerShell window while keeping the same lifecycle (start back
 **Verification:**
 
 - Launch from desktop shortcut → only the GUI appears; no terminal flash or persistent window.
-- Close GUI → backend stops (port 8000 free); confirm with `scripts\stop-backend.ps1` or health poll.
+- Close GUI → backend stops (port 18080 free); confirm with `scripts\stop-backend.ps1` or health poll.
 - Force failure (stop setup / kill python) → message box with actionable text, not a silent exit.
 - Re-run `scripts\smoke-test-release.ps1` if it covers launch lifecycle.
 

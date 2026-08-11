@@ -10,7 +10,10 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
-BASE = "http://127.0.0.1:8000"
+ROOT = Path(__file__).resolve().parents[1]
+_manifest = json.loads((ROOT / "version.json").read_text(encoding="utf-8"))
+_BACKEND_PORT = int(_manifest.get("backend_port", 18080))
+BASE = f"http://127.0.0.1:{_BACKEND_PORT}"
 
 
 def get(path: str) -> tuple[int, object]:

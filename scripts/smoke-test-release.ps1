@@ -52,13 +52,14 @@ $env:PYTHONPATH = Get-PythonPackagesDir -InstallRoot $InstallRoot
 $env:PYTHONNOUSERSITE = "1"
 Add-FfmpegToPath -InstallRoot $InstallRoot
 
+$backendPort = Get-BackendPort -InstallRoot $InstallRoot
 $backend = Start-Process -FilePath $pythonExe `
-    -ArgumentList "-m uvicorn backend.main:app --host 127.0.0.1 --port 8000" `
+    -ArgumentList "-m uvicorn backend.main:app --host 127.0.0.1 --port $backendPort" `
     -WorkingDirectory $InstallRoot `
     -WindowStyle Hidden `
     -PassThru
 
-$health = Wait-BackendHealth -TimeoutSeconds 30
+$health = Wait-BackendHealth -InstallRoot $InstallRoot -TimeoutSeconds 30
 Stop-BackendProcess -BackendProcess $backend
 & (Join-Path $InstallRoot "scripts\stop-backend.ps1") | Out-Null
 

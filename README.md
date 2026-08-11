@@ -4,7 +4,7 @@ A Windows desktop app for **validating, organizing, and delivering** media files
 
 Built for operators and producers working with **Pixera**, **PlayBack Pro**, **Mitti**, and similar playback systems.
 
-**Latest release:** [Download v2.2.0](https://github.com/jjpainter1/ShowMediaIntakeTool/releases/latest) (Windows 64-bit zip)
+**Latest release:** [Download v2.2.1](https://github.com/jjpainter1/ShowMediaIntakeTool/releases/latest) (Windows 64-bit zip)
 
 ![Dashboard with screen cards, per-file validation, review queue, and delivery stats](docs/images/README-dashboard.png)
 
@@ -27,7 +27,7 @@ The tool **never deletes** media and **never moves files already in active scree
 
 **Requirements:** Windows 10/11 (64-bit), ~500 MB disk space, internet on first setup (Python install).
 
-1. Download **`ShowMediaIntakeTool-v2.2.0-win64.zip`** from [Releases](https://github.com/jjpainter1/ShowMediaIntakeTool/releases).
+1. Download **`ShowMediaIntakeTool-v2.2.1-win64.zip`** from [Releases](https://github.com/jjpainter1/ShowMediaIntakeTool/releases).
 2. Extract to a permanent folder (e.g. `C:\Tools\ShowMediaIntakeTool\`).
 3. Run **`scripts\setup.cmd`** (first time only).
 4. Launch via the **desktop shortcut** — do not double-click the `.exe` alone.

@@ -73,7 +73,7 @@ Start-Process -FilePath "powershell.exe" `
     -WorkingDirectory $InstallRoot `
     -WindowStyle Normal | Out-Null
 
-Write-Host "Waiting for backend on http://127.0.0.1:8000 ..."
+Write-Host "Waiting for backend on $(Get-BackendBaseUrl -InstallRoot $InstallRoot) ..."
 $health = Wait-BackendHealth -TimeoutSeconds 45
 if (-not $health) {
     Write-Host ""

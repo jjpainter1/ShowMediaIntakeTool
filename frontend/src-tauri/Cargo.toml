@@ -1,6 +1,6 @@
 [package]
 name = "show-media-intake-tool"
-version = "2.2.0"
+version = "2.2.1"
 description = "Show Media Intake Tool"
 authors = ["Prestige AV"]
 edition = "2021"

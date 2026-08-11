@@ -116,7 +116,7 @@ function App() {
             setLaunchError(
               'Backend is out of date (phase ' +
                 health.phase +
-                '). Run .\\scripts\\start-backend.ps1 to restart on port 8000 with config editor support.',
+                '). Run .\\scripts\\start-backend.ps1 to restart on port 18080 with config editor support.',
             )
           } else {
             setLaunchError(null)

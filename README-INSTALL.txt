@@ -45,7 +45,7 @@ TROUBLESHOOTING
 
   "App says backend is not running"
     Run scripts\setup.cmd again.
-    Make sure no other program is using port 8000.
+    Make sure no other program is using port 18080.
 
   "ffprobe not available"
     Re-extract the zip - the tools\ffmpeg folder may be incomplete.
@@ -81,6 +81,6 @@ LICENSE AND THIRD-PARTY SOFTWARE
 
 SUPPORT
   https://github.com/prestigeav/ShowMediaIntakeTool
-  Version: 2.2.0
+  Version: 2.2.1
 
 ================================================================================

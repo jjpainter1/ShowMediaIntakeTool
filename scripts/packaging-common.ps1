@@ -305,13 +305,50 @@ function Test-FfprobeBundled {
     return $LASTEXITCODE -eq 0
 }
 
+function Get-BackendPort {
+    param([string]$InstallRoot = (Get-InstallRoot))
+    $manifest = Get-VersionManifest -InstallRoot $InstallRoot
+    if ($null -ne $manifest.backend_port) {
+        return [int]$manifest.backend_port
+    }
+    return 18080
+}
+
+function Get-BackendBaseUrl {
+    param([string]$InstallRoot = (Get-InstallRoot))
+    return "http://127.0.0.1:$(Get-BackendPort -InstallRoot $InstallRoot)"
+}
+
+function Get-BackendHealthUrl {
+    param([string]$InstallRoot = (Get-InstallRoot))
+    return "$(Get-BackendBaseUrl -InstallRoot $InstallRoot)/api/health"
+}
+
+function Show-BackendLogTail {
+    param(
+        [string]$InstallRoot = (Get-InstallRoot),
+        [int]$Lines = 25
+    )
+    $candidates = @(
+        (Join-Path $InstallRoot "setup-backend-test.log")
+        (Join-Path $InstallRoot "backend.log")
+    )
+    foreach ($logPath in $candidates) {
+        if (-not (Test-Path $logPath)) { continue }
+        Write-Host ""
+        Write-Host "---- $([IO.Path]::GetFileName($logPath)) (last $Lines lines) ----"
+        Get-Content $logPath -Tail $Lines -ErrorAction SilentlyContinue | ForEach-Object { Write-Host $_ }
+    }
+}
+
 function Wait-BackendHealth {
     param(
+        [string]$InstallRoot = (Get-InstallRoot),
         [int]$TimeoutSeconds = 30,
         [int]$IntervalMs = 500
     )
     $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
-    $healthUrl = "http://127.0.0.1:8000/api/health"
+    $healthUrl = Get-BackendHealthUrl -InstallRoot $InstallRoot
     while ((Get-Date) -lt $deadline) {
         try {
             $health = Invoke-RestMethod -Uri $healthUrl -TimeoutSec 2

@@ -1,5 +1,6 @@
 {
-  "app_version": "2.2.0",
+  "app_version": "2.2.1",
+  "backend_port": 18080,
   "python_min": "3.10",
   "python_recommended": "3.12.8",
   "python_installer_url": "https://www.python.org/ftp/python/3.12.8/python-3.12.8-amd64.exe",

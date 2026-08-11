@@ -22,9 +22,12 @@ if (-not (Test-RuntimeReady -InstallRoot $InstallRoot)) {
 }
 
 $stopScript = Join-Path $InstallRoot "scripts\stop-backend.ps1"
+$backendPort = Get-BackendPort -InstallRoot $InstallRoot
+$backendUrl = Get-BackendBaseUrl -InstallRoot $InstallRoot
+
 & $stopScript -Quiet
 if ($LASTEXITCODE -ne 0) {
-    Write-Host "WARNING: Port 8000 may still be in use. Close other copies of the app and try again."
+    Write-Host "WARNING: Port $backendPort may still be in use. Close other copies of the app and try again."
 }
 
 $startBackendScript = Join-Path $InstallRoot "scripts\start-backend.ps1"
@@ -41,18 +44,19 @@ if (-not $backend) {
 }
 
 Write-Host "Starting backend..."
-$health = Wait-BackendHealth -TimeoutSeconds 45
+$health = Wait-BackendHealth -InstallRoot $InstallRoot -TimeoutSeconds 45
 if (-not $health) {
     Stop-BackendProcess -BackendProcess $backend
     & $stopScript -Quiet | Out-Null
     Write-Host ""
     Write-Host "ERROR: Backend did not become ready in 45 seconds."
     Write-Host "Check backend.log in the install folder for details."
-    Write-Host "Another copy may already be running, or another app is using port 8000."
+    Write-Host "Another copy may already be running, or another app is using port $backendPort."
+    Show-BackendLogTail -InstallRoot $InstallRoot
     exit 1
 }
 
-Write-Host "OK  Backend ready on http://127.0.0.1:8000"
+Write-Host "OK  Backend ready on $backendUrl"
 
 if (-not $health.ffprobe_available) {
     Stop-BackendProcess -BackendProcess $backend

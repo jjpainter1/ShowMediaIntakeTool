@@ -1,6 +1,15 @@
+declare const __BACKEND_PORT__: string | undefined
+
+const DEFAULT_BACKEND_PORT = 18080
+
+function productionApiBase(): string {
+  const port = __BACKEND_PORT__ ? Number(__BACKEND_PORT__) : DEFAULT_BACKEND_PORT
+  return `http://127.0.0.1:${port}`
+}
+
 const API_BASE =
   import.meta.env.VITE_API_BASE ??
-  (import.meta.env.DEV ? '' : 'http://127.0.0.1:8000')
+  (import.meta.env.DEV ? '' : productionApiBase())
 
 export type HealthResponse = {
   status: string
@@ -102,7 +111,7 @@ export class ApiError extends Error {
 
 const STALE_BACKEND_MESSAGE =
   'Dashboard API is unavailable. Restart the Python backend with ' +
-  'python -m uvicorn backend.main:app --reload --port 8000 ' +
+  'python -m uvicorn backend.main:app --reload --port 18080 ' +
   '(an older process may still be running without Phase 2 routes).'
 
 export function formatDashboardError(err: unknown): string {
@@ -353,7 +362,7 @@ class IntakeWebSocketError extends Error {
 
 const STALE_INTAKE_MESSAGE =
   'Intake API unavailable. Restart the backend: .\\scripts\\start-backend.ps1 ' +
-  '(an older process may still be on port 8000 without Phase 4 routes).'
+  '(an older process may still be on port 18080 without Phase 4 routes).'
 
 export function formatIntakeError(err: unknown): string {
   if (err instanceof ApiError) {
@@ -702,7 +711,7 @@ export function openSpecFile(outputPath: string): Promise<{ opened: boolean; pat
 
 const STALE_SPEC_MESSAGE =
   'Spec API unavailable. Restart the backend: .\\scripts\\start-backend.ps1 ' +
-  '(an older process may still be on port 8000 without Phase 6 routes).'
+  '(an older process may still be on port 18080 without Phase 6 routes).'
 
 export function formatSpecError(err: unknown): string {
   if (err instanceof ApiError) {
@@ -729,7 +738,7 @@ export function pickFileFromServer(
 
 const STALE_CONFIG_MESSAGE =
   'Config API unavailable. Restart the backend: .\\scripts\\start-backend.ps1 ' +
-  '(an older process may still be on port 8000 without Phase 5 routes).'
+  '(an older process may still be on port 18080 without Phase 5 routes).'
 
 export function formatConfigError(err: unknown): string {
   if (err instanceof ApiError) {

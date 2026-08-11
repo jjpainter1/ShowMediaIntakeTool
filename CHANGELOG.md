@@ -6,6 +6,15 @@ All notable changes to Show Media Intake Tool v2 are documented here for GitHub 
 
 ---
 
+## [2.2.1] — 2026-07-28
+
+### Fixed
+
+- **Backend port changed to 18080** — avoids conflict with Pixera Companion and other tools on port 8000. Port is defined in `version.json` (`backend_port`) and used by launcher scripts, dev proxy, and the packaged desktop app.
+- **Setup diagnostics** — failed backend health check during `setup.cmd` now prints the tail of `setup-backend-test.log` / `backend.log` instead of only guessing port conflicts.
+
+---
+
 ## [2.2.0] — 2026-07-28
 
 Field-test release: still delivery formats, dashboard sequence grouping, and live copy progress.

@@ -112,19 +112,30 @@ $packagesDir = Get-PythonPackagesDir -InstallRoot $InstallRoot
 $env:PYTHONPATH = $packagesDir
 $env:PYTHONNOUSERSITE = "1"
 
+$backendPort = Get-BackendPort -InstallRoot $InstallRoot
+$backendUrl = Get-BackendBaseUrl -InstallRoot $InstallRoot
+$setupLog = Join-Path $InstallRoot "setup-backend-test.log"
+if (Test-Path $setupLog) {
+    Remove-Item $setupLog -Force
+}
+
 $backend = Start-Process -FilePath $pythonExe `
-    -ArgumentList "-m uvicorn backend.main:app --host 127.0.0.1 --port 8000" `
+    -ArgumentList "-m uvicorn backend.main:app --host 127.0.0.1 --port $backendPort" `
     -WorkingDirectory $InstallRoot `
     -WindowStyle Hidden `
-    -PassThru
+    -PassThru `
+    -RedirectStandardOutput $setupLog `
+    -RedirectStandardError $setupLog
 
-$health = Wait-BackendHealth -TimeoutSeconds 30
+$health = Wait-BackendHealth -InstallRoot $InstallRoot -TimeoutSeconds 30
 Stop-BackendProcess -BackendProcess $backend
 & (Join-Path $InstallRoot "scripts\stop-backend.ps1") | Out-Null
 
 if (-not $health) {
     Write-Host ""
-    Write-Host "ERROR: Backend did not become ready. Port 8000 may be in use."
+    Write-Host "ERROR: Backend did not become ready on $backendUrl"
+    Write-Host "Port $backendPort may be in use, or Python failed to start uvicorn."
+    Show-BackendLogTail -InstallRoot $InstallRoot
     exit 1
 }
 if (-not $health.ffprobe_available) {

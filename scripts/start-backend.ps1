@@ -5,6 +5,8 @@ $ErrorActionPreference = "Stop"
 
 $InstallRoot = Get-InstallRoot
 Set-Location $InstallRoot
+$backendPort = Get-BackendPort -InstallRoot $InstallRoot
+$backendUrl = Get-BackendBaseUrl -InstallRoot $InstallRoot
 
 $devPython = Get-DevPythonExecutable -InstallRoot $InstallRoot
 $useDev = $false
@@ -42,15 +44,15 @@ if ($useDev) {
     Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue
     Remove-Item Env:PYTHONNOUSERSITE -ErrorAction SilentlyContinue
     $Host.UI.RawUI.WindowTitle = "Show Media Intake - Backend (dev)"
-    Write-Host "Starting backend (dev) on http://127.0.0.1:8000 ..."
+    Write-Host "Starting backend (dev) on $backendUrl ..."
     Write-Host "Press Ctrl+C to stop."
     $ErrorActionPreference = "Continue"
-    & $pythonExe -m uvicorn backend.main:app --host 127.0.0.1 --port 8000 --reload
+    & $pythonExe -m uvicorn backend.main:app --host 127.0.0.1 --port $backendPort --reload
     exit $LASTEXITCODE
 }
 
 $logFile = Join-Path $InstallRoot "backend.log"
 # uvicorn logs INFO to stderr; with $ErrorActionPreference Stop that kills the server immediately.
 $ErrorActionPreference = "Continue"
-& $pythonExe -m uvicorn backend.main:app --host 127.0.0.1 --port 8000 2>&1 | Out-File -FilePath $logFile -Encoding UTF8
+& $pythonExe -m uvicorn backend.main:app --host 127.0.0.1 --port $backendPort 2>&1 | Out-File -FilePath $logFile -Encoding UTF8
 exit $LASTEXITCODE

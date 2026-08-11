@@ -1,5 +1,7 @@
 """ffprobe integration for video/audio tech spec extraction."""
 
+from __future__ import annotations
+
 import json
 import subprocess
 from dataclasses import dataclass

@@ -114,9 +114,13 @@ $env:PYTHONNOUSERSITE = "1"
 
 $backendPort = Get-BackendPort -InstallRoot $InstallRoot
 $backendUrl = Get-BackendBaseUrl -InstallRoot $InstallRoot
+$setupLogOut = Join-Path $InstallRoot "setup-backend-test.out.log"
+$setupLogErr = Join-Path $InstallRoot "setup-backend-test.err.log"
 $setupLog = Join-Path $InstallRoot "setup-backend-test.log"
-if (Test-Path $setupLog) {
-    Remove-Item $setupLog -Force
+foreach ($logPath in @($setupLogOut, $setupLogErr, $setupLog)) {
+    if (Test-Path $logPath) {
+        Remove-Item $logPath -Force
+    }
 }
 
 $backend = Start-Process -FilePath $pythonExe `
@@ -124,12 +128,23 @@ $backend = Start-Process -FilePath $pythonExe `
     -WorkingDirectory $InstallRoot `
     -WindowStyle Hidden `
     -PassThru `
-    -RedirectStandardOutput $setupLog `
-    -RedirectStandardError $setupLog
+    -RedirectStandardOutput $setupLogOut `
+    -RedirectStandardError $setupLogErr
 
 $health = Wait-BackendHealth -InstallRoot $InstallRoot -TimeoutSeconds 30
 Stop-BackendProcess -BackendProcess $backend
 & (Join-Path $InstallRoot "scripts\stop-backend.ps1") | Out-Null
+
+# Merge stdout/stderr into one diagnostic log (Start-Process requires distinct redirect paths).
+$merged = @()
+foreach ($logPath in @($setupLogOut, $setupLogErr)) {
+    if (Test-Path $logPath) {
+        $merged += Get-Content $logPath -ErrorAction SilentlyContinue
+    }
+}
+if ($merged.Count -gt 0) {
+    $merged | Set-Content -Path $setupLog -Encoding UTF8
+}
 
 if (-not $health) {
     Write-Host ""

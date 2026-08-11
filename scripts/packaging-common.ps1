@@ -331,6 +331,8 @@ function Show-BackendLogTail {
     )
     $candidates = @(
         (Join-Path $InstallRoot "setup-backend-test.log")
+        (Join-Path $InstallRoot "setup-backend-test.err.log")
+        (Join-Path $InstallRoot "setup-backend-test.out.log")
         (Join-Path $InstallRoot "backend.log")
     )
     foreach ($logPath in $candidates) {

@@ -42,7 +42,11 @@ Write-Host ""
 
 if (-not $SkipTauriBuild) {
     Write-Host "Building Tauri desktop app (npm run tauri:build)..."
-    $env:CARGO_TARGET_DIR = $TauriTargetDir
+    # Keep Cargo target outside Dropbox to avoid EBUSY / file-lock failures during sync.
+    if (-not $env:CARGO_TARGET_DIR) {
+        $env:CARGO_TARGET_DIR = Join-Path $env:LOCALAPPDATA "ShowMediaIntakeTool\cargo-target"
+    }
+    $TauriTargetDir = $env:CARGO_TARGET_DIR
     Push-Location (Join-Path $RepoRoot "frontend")
     try {
         npm run tauri:build
@@ -51,6 +55,10 @@ if (-not $SkipTauriBuild) {
         }
     } finally {
         Pop-Location
+    }
+} else {
+    if ($env:CARGO_TARGET_DIR) {
+        $TauriTargetDir = $env:CARGO_TARGET_DIR
     }
 }
 
@@ -152,15 +160,25 @@ Write-Host "OK  ffprobe staged"
 Get-ChildItem -Path $StageDir -Recurse -Directory -Filter "__pycache__" -ErrorAction SilentlyContinue |
     ForEach-Object { Remove-Item $_.FullName -Recurse -Force -ErrorAction SilentlyContinue }
 
-# --- Zip ---
+# --- Zip (copy to %TEMP% first — Dropbox often locks files under dist\) ---
 New-Item -ItemType Directory -Path $DistRoot -Force | Out-Null
 $zipPath = Join-Path $DistRoot "$ReleaseName.zip"
+$tempStage = Join-Path $env:TEMP $ReleaseName
+$tempZip = Join-Path $env:TEMP "$ReleaseName.zip"
+if (Test-Path $tempStage) {
+    Remove-Item $tempStage -Recurse -Force
+}
+if (Test-Path $tempZip) {
+    Remove-Item $tempZip -Force
+}
+Copy-Item -Path $StageDir -Destination $tempStage -Recurse -Force
+Compress-Archive -Path $tempStage -DestinationPath $tempZip -CompressionLevel Optimal
 if (Test-Path $zipPath) {
     Remove-Item $zipPath -Force
 }
-
-Write-Host "Creating zip..."
-Compress-Archive -Path $StageDir -DestinationPath $zipPath -CompressionLevel Optimal
+Copy-Item -Path $tempZip -Destination $zipPath -Force
+Remove-Item $tempZip -Force -ErrorAction SilentlyContinue
+Remove-Item $tempStage -Recurse -Force -ErrorAction SilentlyContinue
 
 $hash = Get-FileHash -Path $zipPath -Algorithm SHA256
 $hashPath = "$zipPath.sha256"

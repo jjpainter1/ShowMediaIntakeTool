@@ -6,10 +6,12 @@ $ErrorActionPreference = "Stop"
 $Host.UI.RawUI.WindowTitle = "Show Media Intake Tool - Setup"
 $InstallRoot = Get-InstallRoot
 Set-Location $InstallRoot
+$manifest = Get-VersionManifest -InstallRoot $InstallRoot
 
 Write-Host ""
 Write-Host "======================================================================"
 Write-Host "  SHOW MEDIA INTAKE TOOL  |  First-time Setup"
+Write-Host "  Version $($manifest.app_version)  |  Backend port $($manifest.backend_port)"
 Write-Host "======================================================================"
 Write-Host ""
 
@@ -26,7 +28,6 @@ if ($missing.Count -gt 0) {
 
 Unblock-InstallFolder -InstallRoot $InstallRoot
 
-$manifest = Get-VersionManifest -InstallRoot $InstallRoot
 Update-SessionPath
 
 # --- Python ---
@@ -109,9 +110,6 @@ Write-Host "imports ok"
 & (Join-Path $InstallRoot "scripts\stop-backend.ps1") | Out-Null
 
 $packagesDir = Get-PythonPackagesDir -InstallRoot $InstallRoot
-$env:PYTHONPATH = $packagesDir
-$env:PYTHONNOUSERSITE = "1"
-
 $backendPort = Get-BackendPort -InstallRoot $InstallRoot
 $backendUrl = Get-BackendBaseUrl -InstallRoot $InstallRoot
 $setupLogOut = Join-Path $InstallRoot "setup-backend-test.out.log"
@@ -123,15 +121,31 @@ foreach ($logPath in @($setupLogOut, $setupLogErr, $setupLog)) {
     }
 }
 
-$backend = Start-Process -FilePath $pythonExe `
-    -ArgumentList "-m uvicorn backend.main:app --host 127.0.0.1 --port $backendPort" `
+# Launch via a child PowerShell so PYTHONPATH / ffmpeg PATH are explicit in the
+# process command line (more reliable than relying on Start-Process env inherit).
+$ffmpegBin = Join-Path $InstallRoot "tools\ffmpeg\bin"
+$backendCmd = @"
+`$ErrorActionPreference = 'Continue'
+`$env:PYTHONPATH = '$packagesDir'
+`$env:PYTHONNOUSERSITE = '1'
+`$env:PATH = '$ffmpegBin;' + `$env:PATH
+Set-Location -LiteralPath '$InstallRoot'
+& '$pythonExe' -m uvicorn backend.main:app --host 127.0.0.1 --port $backendPort
+"@
+
+$backend = Start-Process -FilePath "powershell.exe" `
+    -ArgumentList @(
+        "-NoProfile",
+        "-ExecutionPolicy", "Bypass",
+        "-Command", $backendCmd
+    ) `
     -WorkingDirectory $InstallRoot `
     -WindowStyle Hidden `
     -PassThru `
     -RedirectStandardOutput $setupLogOut `
     -RedirectStandardError $setupLogErr
 
-$health = Wait-BackendHealth -InstallRoot $InstallRoot -TimeoutSeconds 30
+$health = Wait-BackendHealth -InstallRoot $InstallRoot -TimeoutSeconds 45
 Stop-BackendProcess -BackendProcess $backend
 & (Join-Path $InstallRoot "scripts\stop-backend.ps1") | Out-Null
 
@@ -150,6 +164,7 @@ if (-not $health) {
     Write-Host ""
     Write-Host "ERROR: Backend did not become ready on $backendUrl"
     Write-Host "Port $backendPort may be in use, or Python failed to start uvicorn."
+    Write-Host "Install folder: $InstallRoot"
     Show-BackendLogTail -InstallRoot $InstallRoot
     exit 1
 }

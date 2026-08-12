@@ -31,6 +31,8 @@ v2.2.0 introduced still images, dashboard sequence grouping, and copy progress b
 
 ## [2.2.0] — 2026-07-28
 
+> **Do not use this release.** First-time setup and backend startup fail on clean Windows installs. Use **[v2.2.1](https://github.com/jjpainter1/ShowMediaIntakeTool/releases/tag/v2.2.1)** instead.
+
 Field-test release: still delivery formats, dashboard sequence grouping, and live copy progress.
 
 ### Added

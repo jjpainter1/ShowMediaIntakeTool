@@ -18,7 +18,9 @@ $Manifest = Get-VersionManifest -InstallRoot $RepoRoot
 $Version = $Manifest.app_version
 $DistRoot = Join-Path $RepoRoot "dist"
 $ReleaseName = "ShowMediaIntakeTool-v$Version-win64"
-$StageDir = Join-Path $DistRoot $ReleaseName
+# Stage outside Dropbox — in-place overwrite under dist\ often leaves empty folders.
+$StageDir = Join-Path $env:TEMP $ReleaseName
+$DistStageDir = Join-Path $DistRoot $ReleaseName
 $TauriTargetDir = Join-Path $RepoRoot "frontend\src-tauri\target"
 $StagedAppExeName = "Show Media Intake Tool.exe"
 
@@ -32,6 +34,20 @@ function Find-TauriReleaseExe {
         if (Test-Path $path) { return $path }
     }
     return $null
+}
+
+function Copy-Tree {
+    param([string]$Source, [string]$Dest)
+    if (-not (Test-Path $Source)) {
+        throw "Missing source path: $Source"
+    }
+    if (Test-Path $Dest) {
+        Remove-Item $Dest -Recurse -Force
+    }
+    Copy-Item -Path $Source -Destination $Dest -Recurse -Force
+    if (-not (Test-Path $Dest)) {
+        throw "Copy failed: $Dest was not created from $Source"
+    }
 }
 
 Write-Host ""
@@ -73,24 +89,12 @@ if (-not $TauriExe) {
 Write-Host "OK  Tauri build: $TauriExe"
 
 if (Test-Path $StageDir) {
-    Write-Host "Refreshing stage folder..."
-    try {
-        Remove-Item $StageDir -Recurse -Force -ErrorAction Stop
-    } catch {
-        Write-Host "WARNING: Could not fully clear stage folder (files may be in use). Overwriting in place."
-    }
+    Write-Host "Refreshing temp stage folder..."
+    Remove-Item $StageDir -Recurse -Force
 }
 New-Item -ItemType Directory -Path $StageDir -Force | Out-Null
 
-function Copy-Tree {
-    param([string]$Source, [string]$Dest)
-    if (-not (Test-Path $Source)) {
-        throw "Missing source path: $Source"
-    }
-    Copy-Item -Path $Source -Destination $Dest -Recurse -Force
-}
-
-Write-Host "Staging application files..."
+Write-Host "Staging application files to $StageDir ..."
 Copy-Item $TauriExe -Destination (Join-Path $StageDir $StagedAppExeName)
 Copy-Tree (Join-Path $RepoRoot "backend") (Join-Path $StageDir "backend")
 Copy-Tree (Join-Path $RepoRoot "modules") (Join-Path $StageDir "modules")
@@ -131,13 +135,13 @@ if ($SkipFfmpegDownload -and $hasLocalFfmpeg) {
 } else {
     Write-Host "Downloading FFmpeg ($($Manifest.ffmpeg_version))..."
     $zipUrl = $Manifest.ffmpeg_download_url
-    $zipPath = Join-Path $env:TEMP "ShowMediaIntakeTool-ffmpeg.zip"
+    $ffmpegZipPath = Join-Path $env:TEMP "ShowMediaIntakeTool-ffmpeg.zip"
     $extractRoot = Join-Path $env:TEMP "ShowMediaIntakeTool-ffmpeg-extract"
     if (Test-Path $extractRoot) {
         Remove-Item $extractRoot -Recurse -Force
     }
-    Invoke-WebRequest -Uri $zipUrl -OutFile $zipPath -UseBasicParsing
-    Expand-Archive -Path $zipPath -DestinationPath $extractRoot -Force
+    Invoke-WebRequest -Uri $zipUrl -OutFile $ffmpegZipPath -UseBasicParsing
+    Expand-Archive -Path $ffmpegZipPath -DestinationPath $extractRoot -Force
 
     $binDir = Get-ChildItem -Path $extractRoot -Recurse -Directory |
         Where-Object { $_.Name -eq "bin" } |
@@ -147,7 +151,7 @@ if ($SkipFfmpegDownload -and $hasLocalFfmpeg) {
     }
     Copy-Item (Join-Path $binDir.FullName "ffmpeg.exe") -Destination $ffmpegBinDest
     Copy-Item (Join-Path $binDir.FullName "ffprobe.exe") -Destination $ffmpegBinDest
-    Remove-Item $zipPath -Force -ErrorAction SilentlyContinue
+    Remove-Item $ffmpegZipPath -Force -ErrorAction SilentlyContinue
     Remove-Item $extractRoot -Recurse -Force -ErrorAction SilentlyContinue
 }
 
@@ -156,29 +160,49 @@ if (-not (Test-Path (Join-Path $ffmpegBinDest "ffprobe.exe"))) {
 }
 Write-Host "OK  ffprobe staged"
 
-# Drop bytecode caches — not needed in distribution and can lock under Dropbox/antivirus.
+# Drop bytecode caches — not needed in distribution.
 Get-ChildItem -Path $StageDir -Recurse -Directory -Filter "__pycache__" -ErrorAction SilentlyContinue |
     ForEach-Object { Remove-Item $_.FullName -Recurse -Force -ErrorAction SilentlyContinue }
 
-# --- Zip (copy to %TEMP% first — Dropbox often locks files under dist\) ---
+$missing = Test-InstallIntegrity -InstallRoot $StageDir
+if ($missing.Count -gt 0) {
+    Write-Host "ERROR: Staged release is incomplete. Missing:"
+    foreach ($item in $missing) {
+        Write-Host "  - $item"
+    }
+    exit 1
+}
+$backendFiles = @(Get-ChildItem (Join-Path $StageDir "backend") -Recurse -File -Filter "*.py")
+$moduleFiles = @(Get-ChildItem (Join-Path $StageDir "modules") -Recurse -File -Filter "*.py")
+if ($backendFiles.Count -lt 3 -or $moduleFiles.Count -lt 5) {
+    throw "Staged Python trees look incomplete (backend=$($backendFiles.Count), modules=$($moduleFiles.Count))."
+}
+Write-Host "OK  Stage integrity ($($backendFiles.Count) backend py, $($moduleFiles.Count) module py)"
+
+# --- Zip from temp stage ---
 New-Item -ItemType Directory -Path $DistRoot -Force | Out-Null
 $zipPath = Join-Path $DistRoot "$ReleaseName.zip"
-$tempStage = Join-Path $env:TEMP $ReleaseName
 $tempZip = Join-Path $env:TEMP "$ReleaseName.zip"
-if (Test-Path $tempStage) {
-    Remove-Item $tempStage -Recurse -Force
-}
 if (Test-Path $tempZip) {
     Remove-Item $tempZip -Force
 }
-Copy-Item -Path $StageDir -Destination $tempStage -Recurse -Force
-Compress-Archive -Path $tempStage -DestinationPath $tempZip -CompressionLevel Optimal
+Write-Host "Creating zip..."
+Compress-Archive -Path $StageDir -DestinationPath $tempZip -CompressionLevel Optimal
 if (Test-Path $zipPath) {
-    Remove-Item $zipPath -Force
+    Remove-Item $zipPath -Force -ErrorAction SilentlyContinue
 }
 Copy-Item -Path $tempZip -Destination $zipPath -Force
 Remove-Item $tempZip -Force -ErrorAction SilentlyContinue
-Remove-Item $tempStage -Recurse -Force -ErrorAction SilentlyContinue
+
+# Best-effort mirror under dist\ for local inspection (Dropbox may lock; zip is the artifact).
+try {
+    if (Test-Path $DistStageDir) {
+        Remove-Item $DistStageDir -Recurse -Force -ErrorAction Stop
+    }
+    Copy-Item -Path $StageDir -Destination $DistStageDir -Recurse -Force
+} catch {
+    Write-Host "WARNING: Could not mirror stage folder into dist\ (Dropbox lock). Zip is still valid."
+}
 
 $hash = Get-FileHash -Path $zipPath -Algorithm SHA256
 $hashPath = "$zipPath.sha256"
@@ -187,9 +211,9 @@ $hashPath = "$zipPath.sha256"
 $zipSizeMb = [math]::Round((Get-Item $zipPath).Length / 1MB, 1)
 Write-Host ""
 Write-Host "Release built successfully."
-Write-Host "  Folder: $StageDir"
-Write-Host "  Zip:    $zipPath ($zipSizeMb MB)"
-Write-Host "  SHA256: $hashPath"
+Write-Host "  Temp stage: $StageDir"
+Write-Host "  Zip:        $zipPath ($zipSizeMb MB)"
+Write-Host "  SHA256:     $hashPath"
 Write-Host ""
 Write-Host "Test on a clean machine: extract zip, run scripts\setup.cmd"
 Write-Host ""

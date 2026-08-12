@@ -6,12 +6,26 @@ All notable changes to Show Media Intake Tool v2 are documented here for GitHub 
 
 ---
 
-## [2.2.1] — 2026-07-28
+## [2.2.1] — 2026-08-12
+
+VM-verified patch release. Fixes first-time setup and backend startup on clean Windows machines.
 
 ### Fixed
 
-- **Backend port changed to 18080** — avoids conflict with Pixera Companion and other tools on port 8000. Port is defined in `version.json` (`backend_port`) and used by launcher scripts, dev proxy, and the packaged desktop app.
-- **Setup diagnostics** — failed backend health check during `setup.cmd` now prints the tail of `setup-backend-test.log` / `backend.log` instead of only guessing port conflicts.
+- **Backend port changed to 18080** — avoids conflict with Pixera Companion and other tools on port 8000. Port is centralized in `version.json` (`backend_port`) and used by launcher scripts, dev proxy, and the packaged desktop app. Legacy port 8000 checks removed.
+- **Setup crash on Windows** — `setup.cmd` smoke test no longer redirects stdout and stderr to the same file (`Start-Process` limitation).
+- **Backend failed to start** — `ShowConfig` `NameError` in `ffprobe_wrapper.py` on Python 3.12 (added `from __future__ import annotations`).
+- **Incomplete release zip** — packaging now stages outside Dropbox, verifies required files (including `backend\main.py`) before zipping, and avoids empty `backend\` folders from file-lock failures.
+- **Setup diagnostics** — failed backend health check prints log tails (`setup-backend-test.log`, `backend.log`) and shows version/port in the setup banner.
+
+### Changed since v2.2.0
+
+v2.2.0 introduced still images, dashboard sequence grouping, and copy progress but had install issues on clean VMs (port conflict, missing backend files, Python import error). **Use v2.2.1 for production installs.**
+
+### Packaging
+
+- Artifact: `dist/ShowMediaIntakeTool-v2.2.1-win64.zip` + `.sha256`
+- Verified: clean VM `setup.cmd` + desktop launch (2026-08-12)
 
 ---
 

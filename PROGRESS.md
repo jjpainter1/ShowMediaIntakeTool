@@ -309,7 +309,7 @@ Wire backend spawn/cleanup inside Tauri (`tauri-plugin-shell` or Rust `std::proc
 - [x] Fix filename pattern drag reorder (pointer-based; WebView2)
 - [x] Build `dist\ShowMediaIntakeTool-v2.1.1-win64.zip` (2026-06-20)
 - [x] Test on a clean Windows VM (no Python on PATH) — v2.1.1 verified 2026-06-20
-- [x] Build `dist\ShowMediaIntakeTool-v2.2.0-win64.zip` (2026-07-28)
+- [x] Build `dist\ShowMediaIntakeTool-v2.2.1-win64.zip` (2026-08-12, VM-verified)
 - [ ] Final integration and acceptance testing against DESIGN-V2 checklist
 - [x] **Custom filename convention** — optional tokens (see Planned updates §1)
 - [x] **Still images and image sequences** — config, ffprobe, validation (see Planned updates §2)
